@@ -1,0 +1,77 @@
+{
+  "name": "ai-script-studio",
+  "version": "1.1.3",
+  "description": "AI 智能剧本创作工具 - 桌面版",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shhsgff/ai-script-studio.git"
+  },
+  "homepage": "https://github.com/shhsgff/ai-script-studio#readme",
+  "bugs": {
+    "url": "https://github.com/shhsgff/ai-script-studio/issues"
+  },
+  "main": "electron/main.js",
+  "author": "AI Script Studio",
+  "license": "MIT",
+  "scripts": {
+    "prebuild": "node scripts/make-icon.js",
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "build:dir": "electron-builder --win --dir",
+    "build": "electron-builder --win"
+  },
+  "dependencies": {
+    "docx": "^9.12.0"
+  },
+  "devDependencies": {
+    "electron": "^44.9.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.aistudio.script",
+    "productName": "AI Script Studio",
+    "copyright": "Copyright © 2025",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "electron/**/*",
+      "src/**/*",
+      "scripts/fake-dsh.js",
+      "package.json",
+      "!**/*.map"
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "AI剧本创作工具",
+      "deleteAppDataOnUninstall": false
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-portable.${ext}"
+    }
+  }
+}

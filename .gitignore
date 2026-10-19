@@ -1,0 +1,15 @@
+# 依赖与产物
+node_modules/
+dist/
+build/icon.png
+
+# 截图自检与测试残留
+shots/
+smoke-*.txt
+run.log
+*.log
+*.tmp-*
+
+# 系统
+Thumbs.db
+.DS_Store
