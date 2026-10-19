@@ -3,6 +3,8 @@
 把一份「只有界面、没有功能」的 HTML 原型，做成了一套**真能用的 Windows 桌面软件**：
 Electron + 原生 Node，界面沿用原型的暗色玻璃拟态风格，功能全部接通。
 
+[![构建 Windows 安装包](https://github.com/shhsgff/ai-script-studio/actions/workflows/build-windows.yml/badge.svg)](https://github.com/shhsgff/ai-script-studio/actions/workflows/build-windows.yml)
+
 > 现在版本 **1.1.3**：多文档标签、章 → 节两级目录、故事大纲浮窗、查找替换、Word/PDF/纯文本导出、
 > **本地 dsh 网关（不需要买 Key）**、**DSH 关键词一键生成剧本**、**MCP 反向写入**，
 > 并且下次启动会自动回到上次的工作现场。
@@ -75,8 +77,13 @@ $env:ELECTRON_BUILDER_BINARIES_MIRROR="https://npmmirror.com/mirrors/electron-bu
 npm run build      # 产物在 dist/
 ```
 
-> 仓库里**不包含**已经打包好的 exe（单个 100MB+）。想直接拿可执行文件，按上面第 3 步自己打一次即可，
-> 也可以把产物挂到自己仓库的 Releases 上。
+> 仓库里**不包含**已经打包好的 exe（单个 100MB+）。想直接拿可执行文件，按上面第 3 步自己打一次即可。
+
+### 让 GitHub 帮你打包（可选）
+
+仓库带了 `.github/workflows/build-windows.yml`：到 **Actions → 构建 Windows 安装包 → Run workflow**，
+或者推一个 `v*` 标签，它会在 Windows runner 上先跑一遍 205 条冒烟自测，通过后打包，
+把安装版和免安装版两个 exe 作为 artifact 上传。本地没有 Node 环境也能拿到可执行文件。
 
 ---
 
