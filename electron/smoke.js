@@ -4,7 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 
 const MINI_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 
@@ -298,6 +298,72 @@ async function runDshMcpTests(ctx) {
   return { log: log, data: data };
 }
 
+/* ---------- 插件 bundle（回归：曾经把 CommonJS 服务器放进 type:module 目录，DSH 一调用就 require is not defined） ---------- */
+function runBundleTests(ctx) {
+  const log = [];
+  const rec = (name, ok, extra) => log.push({ name: name, ok: !!ok, extra: extra === undefined ? null : extra });
+  const data = {};
+  let mod;
+  try { mod = require('./dsh-plugin'); } catch (e) {
+    rec('dsh-plugin 模块可用', false, String(e.message || e));
+    return { log: log, data: data };
+  }
+  rec('dsh-plugin 模块可用', true);
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aisc-bundle-'));
+  const bridgeFile = path.join(root, 'mcp-bridge.json');
+  const bridgePort = 45551;
+  fs.writeFileSync(bridgeFile, JSON.stringify({ port: bridgePort, token: 'bundle-test' }), 'utf8');
+  try {
+    const b = mod.buildBundle({
+      baseDir: path.join(root, 'bundle'),
+      serverFile: path.join(__dirname, 'mcp-server.js'),
+      configFile: bridgeFile,
+      pluginName: '@deepseek-ai/dsh-mcp-client'
+    });
+    data.dir = b.dir;
+    const pkg = JSON.parse(fs.readFileSync(path.join(b.dir, 'package.json'), 'utf8'));
+    data.pkg = { name: pkg.name, type: pkg.type || null, main: pkg.main, files: pkg.files };
+    rec('bundle 是 CommonJS（package.json 没有 type: module）', !pkg.type, pkg.type || 'none');
+    rec('bundle 里的服务器改成了 .cjs', /\.cjs$/.test(b.serverFile), path.basename(b.serverFile));
+    rec('bundle 文件清单写的是服务器副本', (pkg.files || []).indexOf(path.basename(b.serverFile)) >= 0, (pkg.files || []).join(','));
+
+    const patchText = fs.readFileSync(path.join(b.dir, 'cordis.patch.yml'), 'utf8');
+    rec('patch 里的路径指向 .cjs 副本', patchText.indexOf(path.basename(b.serverFile)) >= 0, patchText.split('\n').filter(Boolean).slice(-1)[0]);
+
+    // 直接用它交接给 DSH 的那份服务器跑一次真实握手
+    const lines = [
+      { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05' } },
+      { jsonrpc: '2.0', method: 'notifications/initialized' },
+      { jsonrpc: '2.0', id: 2, method: 'tools/list' }
+    ].map((m) => JSON.stringify(m)).join('\n') + '\n';
+    // 主进程里 process.execPath 是 electron.exe，用 ELECTRON_RUN_AS_NODE 让它按 node 语义跑（与 DSH 拉起时一致）
+    const nodeEnv = Object.assign({}, process.env, { ELECTRON_RUN_AS_NODE: '1' });
+    const r = spawnSync(process.execPath, [b.serverFile, bridgeFile], { input: lines, timeout: 20000, encoding: 'utf8', env: nodeEnv });
+    const out = String(r.stdout || '');
+    data.handshake = out.slice(0, 300);
+    const msgs = out.split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch (e) { return null; } }).filter(Boolean);
+    const init = msgs.filter((m) => m.id === 1)[0];
+    const list = msgs.filter((m) => m.id === 2)[0];
+    const esmErr = (out + String(r.stderr || '')).indexOf('require is not defined') >= 0;
+    rec('node 能正常拉起这份服务器（无 ESM 报错）', !!(init && init.result) && !esmErr,
+      esmErr ? 'require is not defined in ES module scope' : (r.stderr || '').slice(0, 120));
+    rec('握手返回 serverInfo=ai-script-studio', !!(init && init.result && init.result.serverInfo && init.result.serverInfo.name === 'ai-script-studio'));
+    rec('tools/list 列出 5 个工具', !!(list && list.result && list.result.tools && list.result.tools.length === 5),
+      list && list.result && list.result.tools ? list.result.tools.length : 0);
+
+    // index.js 也必须是 CommonJS 能被 require
+    const idx = spawnSync(process.execPath, ['-e', 'const m=require(' + JSON.stringify(path.join(b.dir, 'index.js')) + '); console.log(typeof m.apply + ":" + m.name);'], { timeout: 20000, encoding: 'utf8', env: nodeEnv });
+    data.index = String(idx.stdout || '').trim();
+    rec('bundle 的 index.js 能被 require', idx.status === 0 && String(idx.stdout || '').trim() === 'function:ai-script-studio-mcp', (idx.stderr || '').slice(0, 120));
+  } catch (e) {
+    rec('插件 bundle 生成', false, String(e.message || e));
+  } finally {
+    try { fs.rmSync(root, { recursive: true, force: true }); } catch (e) { /* ignore */ }
+  }
+  return { log: log, data: data };
+}
+
 /* ---------- 本地 AI 网关（用本机 dsh 顶替外部 API） ---------- */
 function chatRequest(port, token, payload) {
   return new Promise((resolve) => {
@@ -560,6 +626,7 @@ async function run(ctx) {
   const dshMcp = await runDshMcpTests(ctx);
   const gw = await runGatewayTests(win);
   const diag = await runDiagnosticsTests(ctx);
+  const bundle = runBundleTests(ctx);
 
   // 主进程侧：验证渲染层发出的直连请求确实把技能正文拼进了系统提示词
   const skillBody = mockAI.allBodies().find((b) =>
@@ -570,7 +637,7 @@ async function run(ctx) {
     extra: { systemChars: String(((skillBody && skillBody.messages && skillBody.messages[0]) || {}).content || '').length }
   };
 
-  const allLog = (report.log || []).concat(mcp.log).concat(dshMcp.log).concat(gw.log).concat(diag.log).concat([skillCheck]);
+  const allLog = (report.log || []).concat(mcp.log).concat(dshMcp.log).concat(gw.log).concat(diag.log).concat(bundle.log).concat([skillCheck]);
   const lines = allLog.map((item) =>
     (item.ok ? '  PASS  ' : '  FAIL  ') + item.name + (item.extra ? '  → ' + JSON.stringify(item.extra) : '')
   );
@@ -579,7 +646,7 @@ async function run(ctx) {
   console.log(lines.join('\n'));
   console.log('SMOKE_LOG_END');
 
-  const data = Object.assign({}, report.data, { mcp: mcp.data, dshMcp: dshMcp.data, gateway: gw.data, diag: diag.data });
+  const data = Object.assign({}, report.data, { mcp: mcp.data, dshMcp: dshMcp.data, gateway: gw.data, diag: diag.data, bundle: bundle.data });
   console.log('SMOKE_DATA ' + JSON.stringify(data));
 
   const checks = snapshot(dir, savedPath);

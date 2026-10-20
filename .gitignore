@@ -6,6 +6,8 @@ build/icon.png
 # 截图自检与测试残留
 shots/
 smoke-*.txt
+scripts/_*.mjs
+_msg*.txt
 run.log
 *.log
 *.tmp-*

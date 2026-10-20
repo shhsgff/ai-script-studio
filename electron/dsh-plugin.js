@@ -62,16 +62,18 @@ function bundleDir(baseDir) {
 function buildBundle(opts) {
   const dir = bundleDir(opts.baseDir);
   fs.mkdirSync(dir, { recursive: true });
-  const serverCopy = path.join(dir, 'mcp-server.js');
+  // 注意：服务器文件必须带 .cjs 后缀，而且这个目录里不能声明 "type": "module"。
+  // 否则 DSH 用 node 拉起 mcp-server.js 时，Node 会因为最近的 package.json 声明了 ESM
+  // 而把 CommonJS 的服务器当 ES 模块跑，直接抛 "require is not defined"。
+  const serverCopy = path.join(dir, 'mcp-server.cjs');
   fs.copyFileSync(opts.serverFile, serverCopy);
 
   const pkg = {
     name: BUNDLE_NAME,
     version: '1.0.0',
-    type: 'module',
     main: 'index.js',
     description: 'AI 剧本创作工具的 MCP 工具（由软件本机生成，路径随机器变化）',
-    files: ['cordis.patch.yml', 'mcp-server.js', 'index.js'],
+    files: ['cordis.patch.yml', 'mcp-server.cjs', 'index.js'],
     dsh: { bundle: { patch: './cordis.patch.yml' } }
   };
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify(pkg, null, 2) + '\n', 'utf8');
@@ -90,11 +92,11 @@ function buildBundle(opts) {
   fs.writeFileSync(path.join(dir, 'cordis.patch.yml'), yaml, 'utf8');
 
   const index = [
-    "export const name = 'ai-script-studio-mcp'",
+    "'use strict';",
     '',
     '/* 这个包只贡献一条 patch 行（真正的 MCP 客户端由 @deepseek-ai/dsh-mcp-client 提供）。',
-    ' * 保留一个空插件入口，便于未来在这里挂自己的钩子。 */',
-    'export function apply() {}',
+    ' * 写 CommonJS：目录里不声明 type，server.cjs 与 index.js 都能被 Node 正常加载。 */',
+    "module.exports = { name: 'ai-script-studio-mcp', apply() {} };",
     ''
   ].join('\n');
   fs.writeFileSync(path.join(dir, 'index.js'), index, 'utf8');

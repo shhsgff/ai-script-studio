@@ -5,7 +5,7 @@ Electron + 原生 Node，界面沿用原型的暗色玻璃拟态风格，功能�
 
 [![构建 Windows 安装包](https://github.com/shhsgff/ai-script-studio/actions/workflows/build-windows.yml/badge.svg)](https://github.com/shhsgff/ai-script-studio/actions/workflows/build-windows.yml)
 
-> 现在版本 **1.1.8**：多文档标签、章 → 节两级目录、**可导入 / 可编辑的故事大纲**、查找替换、Word/PDF/纯文本导出、
+> 现在版本 **1.1.9**：多文档标签、章 → 节两级目录、**可导入 / 可编辑的故事大纲**、查找替换、Word/PDF/纯文本导出、
 > **本地 dsh 网关（不需要买 Key）**、**DSH 关键词一键生成剧本**、**MCP 反向写入**，
 > 下次启动自动回到上次的工作现场。1.1.4 加固了**子进程与 MCP**（崩溃不拖垮启动、残留进程自动清理、
 > 诊断日志在 `%APPDATA%\ai-script-studio\logs\app.log`）；1.1.5 让"机器写"和"人写"能同时进行；
@@ -14,6 +14,9 @@ Electron + 原生 Node，界面沿用原型的暗色玻璃拟态风格，功能�
 > 浮窗里直接改标题 / 排序 / 加节点，AI 用「✍️ 按大纲写下一节」一节一节往下写。
 > 1.1.8 改了存档策略：**没保存成文件的剧本，关掉软件就消失**——下次启动只回到保存过的 .aisc 文件，
 > 不会再冒出上次没存的草稿和它的标签页。
+> 1.1.9 修掉「安装为 DSH 插件后一调用就崩」的 bug（插件目录不能再声明 type: module，
+> 服务器改名 mcp-server.cjs），并把 MCP 桥单独发成了一个仓库：
+> **[dsh-ai-script-studio-mcp](https://github.com/shhsgff/dsh-ai-script-studio-mcp)**（可以脱离本软件仓库单独 dsh plugin add）。
 
 ---
 
@@ -29,7 +32,7 @@ Electron + 原生 Node，界面沿用原型的暗色玻璃拟态风格，功能�
 | AI 改写 | 选区或整章 → 提示词 + 快捷指令 → **流式**输出 → 采纳 / 重试 / 复制 / 放弃，多轮改写记录 |
 | 本地网关 | 软件在本机起一个 **OpenAI 兼容网关**，自动生成 `aisc-local-…` 本地密钥，转发给已登录的 `dsh` —— **不用买 Key** |
 | DSH 生成剧本 | 输入关键词 / 设定 → 调本机 `dsh headless` → 自动分章分节，作为新标签打开 |
-| MCP 反向写入 | 内置 stdio MCP server，一键注册进任意版本的 DSH；DSH 的 agent 可直接建剧本、加章节、追加正文 |
+| MCP 反向写入 | 内置 stdio MCP server，一键注册进任意版本的 DSH；DSH 的 agent 可直接建剧本、加章节、追加正文。1.1.9 起「安装为 DSH 插件」生成的是 CommonJS bundle（mcp-server.cjs），能被 node 正常拉起；同一份桥也独立发布在 [dsh-ai-script-studio-mcp](https://github.com/shhsgff/dsh-ai-script-studio-mcp) |
 | 故事大纲浮窗 | 全篇章/节一览，光标所在小节实时高亮，写过亮色、空白灰色；可拖动、位置记忆、点击跳转 |
 | 大纲先行（1.1.7） | 📥 把已有大纲**粘进来**（Markdown `##`、`第X章 / 第X节`、`- 列表`、`1.` 都认，带解析预览）或 ＋ 手写节点；浮窗里双击改标题 / 备注、↑↓ 排序、× 删除；勾选「同时建立章节」就把大纲落成真实目录（同名不重复建，不删正文） |
 | 按大纲写下一节 | AI 面板「✍️ 按大纲写下一节」：自动挑大纲里**还没写**的那一节，把这节已有文字 + 整篇大纲作为上下文，生成结果**直接写进这一节**，而不是覆盖别处 |
@@ -114,6 +117,10 @@ npm run build      # 产物在 dist/
 - **正向**：右上角「🤖 DSH 生成」（`Ctrl+Shift+G`）→ 输入关键词、章节数、每章字数、文风 → 调本机 `dsh headless` 流式生成 → 自动分章分节成新标签。
 - **反向**：设置 → DSH / MCP → 开启 MCP 服务 → 选 profile → **一键注册到 DSH**。
   之后在 DSH 里对话，它就能调用 `create_script / add_chapter / append_text / list_scripts / get_script` 直接往本软件里写。
+- **推荐方式**：设置 → DSH / MCP → 「安装为 DSH 插件（推荐）」→ 选 profile → 安装。
+  这会把一份标准 DSH bundle 交给 dsh plugin add 管理，卸载用 dsh plugin remove，不碰你手写的 YAML。
+- **独立使用**：不想开软件安装时，也可以从 [dsh-ai-script-studio-mcp](https://github.com/shhsgff/dsh-ai-script-studio-mcp) 克隆后
+  `node bin/aisc-mcp.mjs install --profile headless`（自动找桥配置、自动反查当前 DSH 的 mcp-client 包名）。
 
 ### 4. 出问题先看日志
 

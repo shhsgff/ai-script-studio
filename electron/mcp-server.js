@@ -131,7 +131,13 @@ async function callTool(name, args) {
   if (!cfg || !cfg.port) {
     return { content: [{ type: 'text', text: '错误：没有找到桥配置（mcp-bridge.json），请在 AI 剧本创作工具里点「开启 MCP 服务」后重新注册。' }], isError: true };
   }
-  const res = await rpc({ action: name, args: args || {} });
+  let res;
+  try {
+    res = await rpc({ action: name, args: args || {} });
+  } catch (e) {
+    // 软件没开 / 端口不对：当成工具执行失败返回，让宿主把中文原因交给模型，而不是抛协议错误
+    return { content: [{ type: 'text', text: '错误：' + ((e && e.message) || String(e)) }], isError: true };
+  }
   if (!res || res.ok !== true) {
     const msg = (res && res.error) || '工具执行失败';
     return { content: [{ type: 'text', text: '错误：' + msg }], isError: true };
