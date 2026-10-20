@@ -1,0 +1,40 @@
+name: 构建 macOS 安装包
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    # Intel runner：可以同时产出 x64 与 arm64 包（项目没有原生依赖）
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 确认 Electron 二进制
+        run: |
+          if [ ! -d node_modules/electron/dist ]; then node node_modules/electron/install.js; fi
+
+      - name: 打包 macOS（dmg + zip，x64 + arm64）
+        run: npm run build:mac
+
+      - name: 列出产物
+        run: ls -lh dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ai-script-studio-macos
+          path: |
+            dist/*.dmg
+            dist/*.zip
+          if-no-files-found: error
