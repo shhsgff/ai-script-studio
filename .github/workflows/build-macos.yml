@@ -8,8 +8,8 @@ on:
 
 jobs:
   build:
-    # Intel runner：可以同时产出 x64 与 arm64 包（项目没有原生依赖）
-    runs-on: macos-13
+    # 项目没有原生依赖，任意 macOS runner 都能同时产出 x64 与 arm64 包
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
