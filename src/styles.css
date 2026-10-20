@@ -882,6 +882,72 @@ body[data-theme="light"] .wallpaper-shade {
 }
 .of-empty { padding: 18px 10px; text-align: center; font-size: 12px; color: var(--text-muted); }
 
+/* ---- 计划大纲（作者导入/手写，AI 照着写） ---- */
+.of-group-title {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  margin: 6px 2px 3px; padding: 0 2px;
+  font-size: 10.5px; font-weight: 700; color: var(--text-muted);
+}
+.of-group-note { font-weight: 400; font-size: 10px; }
+.of-hint {
+  margin: 2px 2px 8px; padding: 8px 9px;
+  font-size: 11px; line-height: 1.65; color: var(--text-muted);
+  background: rgba(127, 127, 140, 0.09); border-radius: 7px;
+}
+.of-plan {
+  position: relative;
+  display: grid; grid-template-columns: 10px minmax(0, 1fr) auto;
+  grid-template-areas: "b t w" "n n n";
+  align-items: center; column-gap: 5px; row-gap: 1px;
+  padding: 5px 7px; border-radius: 7px; cursor: pointer;
+  font-size: 12px; color: var(--text-main);
+}
+.of-plan:hover { background: rgba(127, 127, 140, 0.16); }
+.of-plan-bullet { grid-area: b; width: 5px; height: 5px; border-radius: 50%; background: rgba(140, 140, 160, 0.45); }
+.of-plan-title { grid-area: t; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.of-plan-note { grid-area: n; padding-left: 15px; font-size: 10.5px; line-height: 1.55; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.of-plan-note.none { display: none; font-style: italic; }
+.of-plan:hover .of-plan-note.none { display: block; opacity: 0.6; }
+.of-plan-act { font-weight: 700; }
+.of-plan-sec { padding-left: 12px; }
+.of-plan.empty { color: var(--text-muted); opacity: 0.62; }
+.of-plan.written .of-plan-title { color: var(--text-strong); }
+.of-plan.written .of-plan-bullet { background: var(--accent); }
+.of-plan.current { background: var(--accent-soft); color: var(--accent); opacity: 1; }
+.of-plan.current .of-plan-bullet { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.of-plan.unlinked .of-plan-title { border-bottom: 1px dashed rgba(140, 140, 160, 0.5); }
+.of-plan .of-words { grid-area: w; }
+.of-row-tools {
+  position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+  display: none; align-items: center; gap: 1px; padding: 2px; border-radius: 6px;
+  background: color-mix(in srgb, var(--bg-menu) 94%, transparent);
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.2);
+}
+.of-plan:hover .of-row-tools { display: flex; }
+.of-plan:hover .of-words { visibility: hidden; }
+.of-mini {
+  width: 18px; height: 18px; padding: 0; border: none; border-radius: 4px;
+  background: transparent; color: var(--text-muted); font-size: 10px; line-height: 1;
+  cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+}
+.of-mini:hover { background: var(--accent); color: #fff; }
+.of-mini.danger:hover { background: var(--danger); }
+.of-plan-title[contenteditable], .of-plan-note[contenteditable] {
+  outline: none; white-space: normal; overflow: visible; text-overflow: clip;
+  padding: 0 3px; border-radius: 4px; background: var(--bg-input);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.of-plan-title.editing, .of-plan-note.editing { cursor: text; }
+
+/* ============ 导入大纲弹窗 ============ */
+#outlineImportModal .modal-content { width: 560px; }
+#oiText { min-height: 190px; font-family: var(--editor-font); }
+.oi-preview { margin-top: 9px; font-size: 11.5px; line-height: 1.6; color: var(--text-muted); }
+.oi-preview.ok { color: var(--success); }
+.oi-preview.bad { color: var(--danger); }
+
+
+
 /* ============ DSH 生成 / MCP ============ */
 #dshModal .modal-content { width: 620px; }
 .dsh-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
@@ -1015,4 +1081,61 @@ code {
   font-size: 11.5px;
   color: var(--text-muted);
 }
+
+/* ============ 技能库 / 本地模型探测 ============ */
+.preset-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 6px; }
+.probe-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.probe-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 8px 10px; border-radius: 8px; background: var(--bg-input);
+  border: 1px solid var(--border); font-size: 12.5px;
+}
+.probe-item.on { border-color: var(--accent); }
+.probe-item .pi-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.probe-item .pi-name { color: var(--text-strong); font-weight: 600; }
+.probe-item .pi-url { color: var(--text-muted); font-size: 11.5px; word-break: break-all; }
+.probe-item select { max-width: 190px; }
+.probe-item .pi-bad { color: var(--danger); font-size: 11.5px; }
+
+.skill-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.skill-item {
+  display: flex; gap: 10px; align-items: flex-start; padding: 9px 10px; cursor: pointer;
+  border-radius: 8px; border: 1px solid var(--border); background: var(--bg-input);
+}
+.skill-item:hover { border-color: var(--border-strong); }
+.skill-item.active { border-color: var(--accent); background: var(--accent-soft); }
+.skill-item .si-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+.skill-item .si-name { color: var(--text-strong); font-weight: 600; font-size: 13px; }
+.skill-item .si-desc { color: var(--text-muted); font-size: 11.5px; line-height: 1.5; max-height: 34px; overflow: hidden; }
+.skill-item .si-src { color: var(--text-muted); font-size: 11px; opacity: .8; white-space: nowrap; }
+.skill-empty { color: var(--text-muted); font-size: 12px; padding: 10px; border: 1px dashed var(--border); border-radius: 8px; }
+.skill-editor { margin-top: 12px; padding: 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg-input); }
+.skill-editor .prompt-input { width: 100%; margin-top: 8px; }
+
+.skill-pick-btn { max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.skill-pop {
+  position: absolute; right: 12px; left: 12px; bottom: 96px; z-index: 40;
+  background: var(--bg-menu); border: 1px solid var(--border-strong); border-radius: 12px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, .38); display: flex; flex-direction: column; max-height: 46vh;
+}
+.skill-pop-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 9px 12px; border-bottom: 1px solid var(--border); font-size: 12.5px; color: var(--text-muted);
+}
+.skill-pop-close { background: none; border: none; color: var(--text-muted); font-size: 16px; cursor: pointer; line-height: 1; }
+.skill-pop-close:hover { color: var(--text-strong); }
+.skill-pop-list { overflow-y: auto; padding: 6px; display: flex; flex-direction: column; gap: 2px; }
+.skill-pop-item {
+  display: flex; gap: 8px; align-items: flex-start; padding: 7px 8px; border-radius: 7px;
+  cursor: pointer; font-size: 12.5px;
+}
+.skill-pop-item:hover { background: var(--bg-input); }
+.skill-pop-item input { margin-top: 2px; }
+.skill-pop-item .sp-name { color: var(--text-strong); }
+.skill-pop-item .sp-desc { color: var(--text-muted); font-size: 11px; line-height: 1.45; }
+.skill-pop-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 8px 12px; border-top: 1px solid var(--border); font-size: 11.5px; color: var(--text-muted);
+}
+
 

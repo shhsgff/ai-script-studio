@@ -208,6 +208,13 @@
 
     <div class="ai-options">
       <label class="opt-row">
+        <span>模式</span>
+        <select id="aiModeSelect">
+          <option value="direct">模型直连（快）</option>
+          <option value="agent">本地 AI Agent（能读技能）</option>
+        </select>
+      </label>
+      <label class="opt-row">
         <span>模型</span>
         <select id="modelSelect">
           <option value="dsh-local">dsh-local（本机网关）</option>
@@ -222,8 +229,29 @@
           <option value="selection">仅选中段落</option>
           <option value="chapter">整章作为参考</option>
           <option value="prev">前文 + 选中段落</option>
+          <option value="outline">整篇大纲</option>
         </select>
       </label>
+      <div class="opt-row" id="aiSkillRow">
+        <span>技能</span>
+        <button class="mini-btn skill-pick-btn" id="btnSkillPick">未选择技能</button>
+      </div>
+      <div class="opt-row" id="outlineWriteRow">
+        <span>大纲</span>
+        <button class="mini-btn" id="btnOutlineWrite" title="让 AI 按大纲里还没写的那一节接着写">✍️ 按大纲写下一节</button>
+      </div>
+    </div>
+
+    <div class="skill-pop" id="skillPop" hidden>
+      <div class="skill-pop-head">
+        <span>选择要遵守的技能</span>
+        <button class="skill-pop-close" id="skillPopClose" title="关闭">×</button>
+      </div>
+      <div class="skill-pop-list" id="skillPopList"></div>
+      <div class="skill-pop-foot">
+        <span id="skillPopHint">技能来自 DSH 的技能目录</span>
+        <button class="mini-btn" id="skillPopManage">管理技能库</button>
+      </div>
     </div>
 
     <button class="action-btn" id="aiActionBtn">🚀 立即调用 AI 改写</button>
@@ -314,10 +342,6 @@
             <button class="theme-btn active" data-theme="dark">🌙 暗黑</button>
             <button class="theme-btn" data-theme="light">☀️ 明亮</button>
           </div>
-        </div>
-        <div class="setting-group">
-          <div class="setting-label">自动保存</div>
-          <label class="check-row"><input type="checkbox" id="autosaveToggle"><span>每 15 秒自动保存草稿（异常退出后可恢复）</span></label>
         </div>
       </div>
 
@@ -419,6 +443,49 @@
           <label class="check-row"><input type="checkbox" id="apiVision"><span>当前模型支持图片输入（视觉模型）</span></label>
         </div>
         <div class="setting-group">
+          <div class="setting-label">一键预设</div>
+          <div class="setting-desc">点一下就把下面的接口地址、密钥、模型全部填好；填完仍可手改。</div>
+          <div class="preset-row" id="presetRow">
+            <button class="mini-btn" data-preset="deepseek">DeepSeek 官方</button>
+            <button class="mini-btn" data-preset="gateway">本机 DSH 网关</button>
+            <button class="mini-btn" data-preset="ollama">Ollama 本地</button>
+            <button class="mini-btn" data-preset="lmstudio">LM Studio</button>
+          </div>
+          <div class="row-actions">
+            <button class="mini-btn" id="probeLocal">探测本地模型</button>
+            <span class="test-result" id="probeResult">扫描本机 11434 / 1234 / 8080 等端口</span>
+          </div>
+          <div class="probe-list" id="probeList" hidden></div>
+        </div>
+        <div class="setting-group">
+          <div class="setting-label">技能库（AI Agent 用）</div>
+          <div class="setting-desc">技能就是一份 <code>SKILL.md</code>（写作风格、分镜规范、口吻设定都行）。技能写进 DSH 的技能目录后，<b>本地 AI Agent 模式</b>能直接加载它们；模型直连模式则把技能正文拼进系统提示词。</div>
+          <div class="row-actions">
+            <button class="mini-btn primary" id="skillNew">新建技能</button>
+            <button class="mini-btn" id="skillOpenFolder">打开技能目录</button>
+            <button class="mini-btn" id="skillRefresh">刷新列表</button>
+            <span class="test-result" id="skillRootHint"></span>
+          </div>
+          <div class="skill-list" id="skillList"></div>
+          <div class="skill-editor" id="skillEditor" hidden>
+            <label class="stack-row">
+              <span>技能名称</span>
+              <input type="text" id="skillName" placeholder="例如：冷峻武侠文风" spellcheck="false">
+            </label>
+            <label class="stack-row">
+              <span>一句话描述</span>
+              <input type="text" id="skillDesc" placeholder="什么时候该用这个技能" spellcheck="false">
+            </label>
+            <textarea class="prompt-input" id="skillContent" rows="8" placeholder="技能正文：规则、示例、禁忌都可以写。例如：&#10;- 句子短，多用动作和声音收尾&#10;- 不写心理独白的解释，用行为暗示"></textarea>
+            <div class="row-actions">
+              <button class="mini-btn primary" id="skillSave">保存技能</button>
+              <button class="mini-btn" id="skillDelete">删除</button>
+              <button class="mini-btn" id="skillCancel">取消</button>
+              <span class="test-result" id="skillEditHint"></span>
+            </div>
+          </div>
+        </div>
+        <div class="setting-group">
           <div class="setting-label">系统提示词</div>
           <div class="setting-desc">每次请求都会带上，用来约束 AI 的输出风格。</div>
           <textarea class="prompt-input" id="apiSystemPrompt" rows="4"></textarea>
@@ -461,16 +528,23 @@
             <button class="mini-btn" id="mcpCopy" disabled>复制配置片段</button>
           </div>
 
-          <div class="setting-label" style="margin-top:14px">自动注册到 DeepSeek Harness</div>
-          <div class="setting-desc">自动找到本机 DSH 的配置目录与 profile，把本软件写入它真正读取的 <code>cordis.patch.yml</code>，并自动适配该版本使用的 MCP 插件名（换版本也不用改）。写前会备份原文件。</div>
+          <div class="setting-label" style="margin-top:14px">安装为 DSH 插件（推荐）</div>
+          <div class="setting-desc">把本软件打成一个标准 DSH <b>插件包</b>（bundle），用官方命令 <code>dsh plugin add</code> 装进 profile —— 之后由 DSH 自己管理这份配置，卸载用 <code>dsh plugin remove</code> 就行，不会揉进你手写的 YAML 里。插件里的路径在本机现场生成，换版本会自动重新探测 MCP 插件名。</div>
           <label class="stack-row">
-            <span>注册到哪个 profile</span>
+            <span>安装到哪个 profile</span>
             <select id="mcpProfile"></select>
           </label>
           <div class="row-actions">
-            <button class="mini-btn primary" id="mcpRegister">一键注册到 DSH</button>
-            <button class="mini-btn" id="mcpUnregister">撤销注册</button>
+            <button class="mini-btn primary" id="mcpPluginInstall">安装为 DSH 插件</button>
+            <button class="mini-btn" id="mcpPluginRemove">卸载插件</button>
             <button class="mini-btn" id="mcpRescan">重新扫描</button>
+          </div>
+
+          <div class="setting-label" style="margin-top:14px">旧方式：直接写 YAML</div>
+          <div class="setting-desc">不装插件时，也可以直接把条目写进 <code>$DSH_HOME/profiles/&lt;profile&gt;/cordis.patch.yml</code>（写前备份、可撤销）。这是安装机制出现之前的做法，仍然可用。</div>
+          <div class="row-actions">
+            <button class="mini-btn" id="mcpRegister">写入 YAML</button>
+            <button class="mini-btn" id="mcpUnregister">撤销 YAML</button>
           </div>
           <div class="dsh-status" id="mcpDshStatus">正在扫描 DSH 配置…</div>
           <div class="setting-desc" id="mcpDshPaths"></div>
@@ -552,12 +626,35 @@
   <div class="of-head" id="ofHead">
     <span class="of-title">🗺️ 故事大纲</span>
     <div class="of-tools">
+      <button class="of-btn" id="ofImport" title="导入大纲（文本 / Markdown）">📥</button>
+      <button class="of-btn" id="ofEdit" title="新建一个大纲节点">＋</button>
       <button class="of-btn" id="ofRefresh" title="立即刷新">⟳</button>
       <button class="of-btn" id="ofClose" title="关闭（设置菜单可重新打开）">✕</button>
     </div>
   </div>
   <div class="of-body" id="ofBody"></div>
   <div class="of-foot" id="ofFoot">跟随光标自动高亮 · 灰色＝尚未写</div>
+</div>
+
+<!-- ===== 导入大纲弹窗 ===== -->
+<div class="modal-overlay" id="outlineImportModal">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h3>📥 导入大纲</h3>
+      <span class="close-btn" id="oiClose">✕</span>
+    </div>
+    <div class="modal-body">
+      <div class="setting-desc">把已经写好或别处拿来的大纲粘进来，格式随便：Markdown 标题、<code>第一章</code> / <code>第一节</code>、<code>- 列表</code>、一行一节都认得。</div>
+      <textarea class="prompt-input" id="oiText" rows="10" placeholder="例如：&#10;## 第一章 雨夜&#10;- 第一场 巷口：雨下了一整夜&#10;- 第二场 刀&#10;## 第二章 天明&#10;- 第一场 城门口"></textarea>
+      <label class="check-row"><input type="checkbox" id="oiApply" checked><span>同时按大纲建立章节与小节（已有同名的不重复建，不会删正文）</span></label>
+      <div class="oi-preview" id="oiResult"></div>
+    </div>
+    <div class="modal-footer">
+      <span class="modal-hint">导入后可随时在浮窗里改，AI 会照着它写</span>
+      <button class="mini-btn" id="oiCancel">取消</button>
+      <button class="mini-btn primary" id="oiOk">导入大纲</button>
+    </div>
+  </div>
 </div>
 
 <!-- ===== DSH 生成弹窗 ===== -->
@@ -609,6 +706,7 @@
 <script src="js/outline.js"></script>
 <script src="js/outlinefloat.js"></script>
 <script src="js/tabs.js"></script>
+<script src="js/skills.js"></script>
 <script src="js/ai.js"></script>
 <script src="js/find.js"></script>
 <script src="js/dshgen.js"></script>

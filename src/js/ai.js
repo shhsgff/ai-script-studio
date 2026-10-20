@@ -30,6 +30,7 @@
     els.model = document.getElementById('modelSelect');
     els.context = document.getElementById('contextSelect');
     els.action = document.getElementById('aiActionBtn');
+    els.outlineWrite = document.getElementById('btnOutlineWrite');
     els.resultPanel = document.getElementById('aiResultPanel');
     els.status = document.getElementById('aiStatus');
     els.stop = document.getElementById('aiStop');
@@ -124,6 +125,9 @@
     if (!p) return '';
     const act = Project.getAct();
     if (!act) return '';
+    if (ctxMode === 'outline') {
+      try { return (Project.outlineToText() || '').slice(0, MAX_REF); } catch (e) { return ''; }
+    }
     if (ctxMode === 'chapter') return docText.slice(0, MAX_REF);
     if (ctxMode === 'prev') {
       const idx = p.acts.findIndex(a => a.id === act.id);
@@ -177,14 +181,48 @@
     U.toast((b.label || '正在工作中') + '，AI 改写暂时不可用；正文仍可以手动编辑。', 'warn', 3400);
   }
 
-  function prepare() {
+  /* ---------- 模式与技能 ---------- */
+  function aiMode() {
+    if (window.Skills && window.Skills.mode) {
+      const m = window.Skills.mode();
+      if (m) return m;
+    }
+    return ((Store.get().api || {}).mode) || 'direct';
+  }
+
+  function skillNames() {
+    return window.Skills ? window.Skills.selected() : [];
+  }
+
+  function buildAgentTask(target, reference, prompt) {
+    let s = '【任务】按下面的要求处理文字（改写 / 续写 / 润色都可以），最终只输出正文本身，不要解释、不要 Markdown 标记。\n\n';
+    s += '【要求】\n' + prompt + '\n\n';
+    if (reference) s += '【上下文（只作参考，不需要改它）】\n' + reference + '\n\n';
+    s += '【原文】\n' + target;
+    return s;
+  }
+
+  async function messagesWithSkills(target, reference, prompt, image) {
+    const messages = buildMessages(target, reference, prompt, image);
+    const names = skillNames();
+    if (!names.length || !window.Skills) return messages;
+    let bodies = [];
+    try { bodies = await window.Skills.bodies(names); } catch (e) { bodies = []; }
+    if (!bodies.length) return messages;
+    const block = bodies.map(function (b) { return '【技能：' + b.name + '】\n' + b.content; }).join('\n\n');
+    messages[0].content = messages[0].content + '\n\n必须遵守下列技能里的写法规则：\n\n' + block;
+    return messages;
+  }
+
+  async function prepare() {
     const blocker = busyBlocker();
     if (blocker) { warnBusy(blocker); return null; }
     const api = Store.get().api || {};
-    if (!api.apiKey || !String(api.apiKey).trim()) {
+    const useAgent = aiMode() === 'agent';
+    if (!useAgent && (!api.apiKey || !String(api.apiKey).trim())) {
       U.confirmBox({
         title: '尚未配置 API Key',
-        message: 'AI 改写需要大模型接口。现在就打开「设置 → AI 配置」填写 Base URL、API Key 与模型名吗？',
+        message: '模型直连需要大模型接口。现在就打开「设置 → AI 配置」填写 Base URL、API Key 与模型名吗？（也可以把「模式」切到「本地 AI Agent」，不用 Key）',
         okText: '去设置'
       }).then((ok) => { if (ok && window.SettingsPanel) window.SettingsPanel.open('ai'); });
       return null;
@@ -206,6 +244,15 @@
     let target = selection && selection.trim() ? selection.trim() : docText;
     let mode = selection && selection.trim() ? 'selection' : 'document';
 
+    const useOutline = outlineArmed ? outlineTarget : null;
+    outlineArmed = false;
+    if (useOutline) {
+      const secText = (Project.sectionText && useOutline.secId)
+        ? Project.sectionText(useOutline.actId, useOutline.secId) : '';
+      target = secText || ('【本节：' + useOutline.title + '】' + (useOutline.note ? '（' + useOutline.note + '）' : ''));
+      mode = 'outline';
+    }
+
     if (!target) { U.toast('正文还是空的，先写点内容吧', 'warn'); return null; }
     if (mode === 'document' && docText.length === 0) { U.toast('正文还是空的', 'warn'); return null; }
 
@@ -215,49 +262,80 @@
     const ctxMode = els.context ? els.context.value : 'selection';
     const reference = collectContext(docText, ctxMode);
 
+    const meta = {
+      actId: (mode === 'outline' && useOutline && useOutline.actId) ? useOutline.actId : act.id,
+      mode: mode,
+      outline: (mode === 'outline' && useOutline) ? useOutline : null,
+      prompt: prompt,
+      original: target,
+      truncated: truncated,
+      ctxMode: ctxMode,
+      agent: useAgent
+    };
+
+    if (useAgent) {
+      return {
+        runMode: 'agent',
+        task: buildAgentTask(target, reference, prompt),
+        skills: skillNames(),
+        model: 'dsh-agent',
+        __meta: meta
+      };
+    }
+
     if (refImage && !api.supportsVision) {
       U.toast('当前模型未开启「支持图片」开关，参考图不会发送给 AI（可在设置中开启）', 'warn', 4200);
     }
 
     return {
-      messages: buildMessages(target, reference, prompt, refImage),
+      runMode: 'direct',
+      messages: await messagesWithSkills(target, reference, prompt, refImage),
       model: api.model || 'deepseek-chat',
       baseUrl: api.baseUrl,
       temperature: typeof api.temperature === 'number' ? api.temperature : 0.8,
       maxTokens: api.maxTokens || 4096,
-      __meta: {
-        actId: act.id,
-        mode: mode,
-        prompt: prompt,
-        original: target,
-        truncated: truncated,
-        ctxMode: ctxMode
-      }
+      __meta: meta
     };
   }
 
   /* ---------- 调用 ---------- */
   async function run() {
-    const req = prepare();
+    let req = null;
+    try { req = await prepare(); } catch (err) { req = null; }
     if (!req) return;
     lastRequest = req;
     const meta = req.__meta;
+    const useAgent = req.runMode === 'agent';
     resultText = '';
-    pending = { id: null, actId: meta.actId, mode: meta.mode, model: req.model, prompt: meta.prompt, original: meta.original };
+    pending = {
+      id: null, actId: meta.actId, mode: meta.mode, model: req.model,
+      prompt: meta.prompt, original: meta.original, outlineTarget: meta.outline || null
+    };
     showPanel();
-    setStatus('生成中…');
-    if (els.resultFoot) els.resultFoot.textContent = '模型：' + req.model + ' · 正在连接…';
+    setStatus(useAgent ? '已交给本地 AI Agent…' : '生成中…');
+    if (els.resultFoot) {
+      els.resultFoot.textContent = (useAgent ? 'Agent：本机 dsh' : '模型：' + req.model) + ' · 正在连接…';
+    }
     renderText();
     setStreaming(true);
 
     try {
-      const res = await window.api.aiStart({
-        messages: req.messages,
-        model: req.model,
-        baseUrl: req.baseUrl,
-        temperature: req.temperature,
-        maxTokens: req.maxTokens
-      });
+      const api = Store.get().api || {};
+      const payload = useAgent
+        ? {
+            mode: 'agent',
+            task: req.task,
+            skills: req.skills || [],
+            timeoutMs: (Number(api.agentTimeoutSec) || 300) * 1000
+          }
+        : {
+            messages: req.messages,
+            model: req.model,
+            baseUrl: req.baseUrl,
+            temperature: req.temperature,
+            maxTokens: req.maxTokens
+          };
+      const res = await window.api.aiStart(payload);
       if (pending) pending.id = res && res.id;
       if (meta.truncated) U.toast('原文过长，已截取前 ' + MAX_TARGET + ' 字发送', 'warn');
     } catch (err) {
@@ -269,7 +347,9 @@
 
   function handleEvent(ev) {
     if (!pending || !ev || ev.id !== pending.id) return;
-    if (ev.type === 'delta') {
+    if (ev.type === 'status') {
+      if (streaming) setStatus(ev.message || '思考中…');
+    } else if (ev.type === 'delta') {
       resultText += (ev.text || '');
       if (els.resultText) els.resultText.textContent = resultText;
       if (streaming) setStatus('生成中… ' + resultText.length + ' 字');
@@ -310,6 +390,50 @@
     setStatus('正在停止…');
   }
 
+  /* ---------- 按大纲写下一节 ---------- */
+  async function outlineWrite() {
+    if (!window.Project) return;
+    const items = Project.outlineList();
+    if (!items.length) {
+      U.toast('还没有大纲：先在大纲浮窗里导入文本或手写节点', 'warn', 3800);
+      if (window.OutlineFloat) window.OutlineFloat.setOpen(true);
+      return;
+    }
+    let prog = Project.outlineProgress();
+    let target = prog.find(function (p) { return !p.written && p.item.level === 2; }) ||
+      prog.find(function (p) { return !p.written; });
+    if (!target) {
+      U.toast('大纲上每一节都写过了，先在大纲浮窗里加个新节点', 'warn', 3600);
+      if (window.OutlineFloat) window.OutlineFloat.setOpen(true);
+      return;
+    }
+    const targetId = target.item.id;
+    if (!target.linked) {
+      Project.applyOutlineToActs();
+      if (window.App && App.refreshAll) App.refreshAll();
+      prog = Project.outlineProgress();
+      target = prog.find(function (p) { return p.item.id === targetId; }) || target;
+    }
+    if (target.act && target.sec && window.Outline) {
+      try { window.Outline.openSection(target.act.id, target.sec.id); } catch (e) {}
+    }
+    outlineTarget = {
+      actId: target.act ? target.act.id : null,
+      secId: target.sec ? target.sec.id : null,
+      title: target.item.title,
+      note: target.item.note || ''
+    };
+    outlineArmed = true;
+    if (els.prompt) {
+      els.prompt.value = '按大纲写「' + target.item.title + '」这一节' +
+        (target.item.note ? '：' + target.item.note : '') +
+        '。只写这一节的正文，承接前文，不用解释。';
+    }
+    if (els.context) els.context.value = 'outline';
+    U.status('准备按大纲写：' + target.item.title);
+    return run();
+  }
+
   /* ---------- 采纳 / 放弃 ---------- */
   function apply() {
     const text = resultText.trim();
@@ -324,6 +448,21 @@
       Project.setActiveAct(actId);
       if (window.Editor) window.Editor.loadAct(Project.getAct());
       if (window.Outline) window.Outline.render();
+    }
+
+    if (mode === 'outline' && pending && pending.outlineTarget) {
+      const t = pending.outlineTarget;
+      const ok = Project.appendToSection(t.actId, t.secId, text);
+      if (!ok) { U.toast('找不到这一节，可能已被删除', 'error'); return; }
+      if (Project.get().activeActId === t.actId && window.Editor && Project.getAct()) {
+        window.Editor.loadAct(Project.getAct());
+      }
+      markApplied();
+      if (window.App) window.App.refreshStats();
+      if (window.Outline) window.Outline.render();
+      if (window.OutlineFloat) window.OutlineFloat.refresh({ immediate: true });
+      U.toast('已写进「' + t.title + '」这一节', 'success');
+      return;
     }
 
     if (mode === 'document') {
@@ -358,6 +497,10 @@
   }
 
   let currentHistoryId = null;
+
+  /* 按大纲写下一节：一次性目标，用掉就清 */
+  let outlineTarget = null;
+  let outlineArmed = false;
 
   function discard() {
     if (currentHistoryId && !appliedTo(currentHistoryId)) {
@@ -569,6 +712,7 @@
     window.api.onAiEvent(handleEvent);
 
     if (els.action) els.action.addEventListener('click', run);
+    if (els.outlineWrite) els.outlineWrite.addEventListener('click', outlineWrite);
     if (els.stop) els.stop.addEventListener('click', stop);
     if (els.apply) els.apply.addEventListener('click', apply);
     if (els.discard) els.discard.addEventListener('click', discard);
@@ -646,7 +790,13 @@
   }
 
   window.AIPanel = {
-    init, run, stop, apply, discard, runContextAction, focusPrompt,
-    onActChanged, renderHistory, syncModelSelect, updateSelectionDisplay
+    init, run, stop, apply, discard, runContextAction, focusPrompt, outlineWrite,
+    onActChanged, renderHistory, syncModelSelect, updateSelectionDisplay,
+    _debug: function () {
+      return pending ? {
+        actId: pending.actId, mode: pending.mode,
+        outline: pending.outlineTarget || null, kind: pending.kind || null
+      } : null;
+    }
   };
 })();

@@ -10,7 +10,6 @@
   let appInfo = null;
   const els = {};
 
-  let autosaveTimer = null;
   let statsTimer = null;
   let titleTimer = null;
   let lastTitleSent = '';
@@ -46,7 +45,6 @@
     els.wpOpacityVal = U.$('#wpOpacityVal');
     els.wpBlur = U.$('#wpBlur');
     els.wpBlurVal = U.$('#wpBlurVal');
-    els.autosaveToggle = U.$('#autosaveToggle');
 
     els.fontFamily = U.$('#fontFamily');
     els.fontSize = U.$('#fontSize');
@@ -116,6 +114,8 @@
     els.mcpConfig = U.$('#mcpConfig');
     els.mcpProfile = U.$('#mcpProfile');
     els.mcpRegister = U.$('#mcpRegister');
+  els.mcpPluginInstall = U.$('#mcpPluginInstall');
+  els.mcpPluginRemove = U.$('#mcpPluginRemove');
     els.mcpUnregister = U.$('#mcpUnregister');
     els.mcpRescan = U.$('#mcpRescan');
     els.mcpDshStatus = U.$('#mcpDshStatus');
@@ -226,12 +226,20 @@
     const key = (cfg.apiKey || '').trim();
     const ok = !!key;
     const isLocalGw = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])/i.test(String(cfg.baseUrl || ''));
+    const isAgent = (cfg.mode || 'direct') === 'agent';
+    if (isAgent) {
+      els.statusApi.textContent = '● 本地 Agent';
+      els.statusApi.classList.add('ok');
+      els.statusApi.classList.remove('bad');
+      els.statusApi.title = 'AI 改写交给本机 dsh（可用 Skill），不需要 API Key';
+      return;
+    }
     els.statusApi.textContent = ok ? ('● ' + (cfg.model || 'deepseek-chat') + (isLocalGw ? ' · 本地' : '')) : '○ AI 未配置';
     els.statusApi.classList.toggle('ok', ok);
     els.statusApi.classList.toggle('bad', !ok);
     els.statusApi.title = ok
       ? (isLocalGw ? '通过本地网关调用本机 dsh：' : '已配置：') + (cfg.baseUrl || '') + ' / ' + (cfg.model || '')
-      : '点击打开「设置 → AI 配置」填写 API Key';
+      : '点击打开「设置 → AI 配置」填写 API Key，或把「模式」切成本地 AI Agent';
   }
 
   /* ---------------- 字数统计 ---------------- */
@@ -957,6 +965,88 @@
     return true;
   }
 
+
+  /* 一键预设：把常用的接口配置写好，用户只需补 Key 或模型名 */
+  const API_PRESETS = {
+    deepseek: { label: 'DeepSeek 官方', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
+    gateway: { label: '本机 DSH 网关', gateway: true },
+    ollama: { label: 'Ollama', baseUrl: 'http://127.0.0.1:11434/v1', model: '', apiKey: 'ollama' },
+    lmstudio: { label: 'LM Studio', baseUrl: 'http://127.0.0.1:1234/v1', model: '', apiKey: 'lm-studio' }
+  };
+
+  async function applyApiPreset(name) {
+    const preset = API_PRESETS[name];
+    if (!preset) return;
+    if (preset.gateway) {
+      const ok = await applyGatewayToConfig();
+      if (ok) U.toast('已切到「本机 DSH 网关」，不需要外面的 Key', 'success');
+      return;
+    }
+    const cur = (Store.get() || {}).api || {};
+    const next = Object.assign({}, cur, {
+      baseUrl: preset.baseUrl,
+      model: preset.model || cur.model || '',
+      mode: 'direct',
+      preset: name
+    });
+    if (preset.apiKey) next.apiKey = preset.apiKey;
+    await Store.patch({ api: next });
+    if (els.apiBaseUrl) els.apiBaseUrl.value = next.baseUrl || '';
+    if (els.apiModel) els.apiModel.value = next.model || '';
+    if (els.apiKey) els.apiKey.value = next.apiKey || '';
+    if (window.AIPanel && AIPanel.syncModelSelect) AIPanel.syncModelSelect();
+    if (window.Skills) { try { Skills.syncModeSelect(); } catch (e) { /* ignore */ } }
+    refreshApiStatus();
+    U.toast('已切到「' + preset.label + '」' + (preset.model ? '' : '，点「探测本地模型」可自动挑一个模型名'), 'success');
+  }
+
+  function renderProbeResult(res) {
+    const box = U.$('#probeResult');
+    const list = U.$('#probeList');
+    const endpoints = (res && res.endpoints) || [];
+    const hit = endpoints.filter(function (e) { return e && e.ok; });
+    if (box) {
+      box.textContent = hit.length
+        ? ('✓ 发现 ' + hit.length + ' 个可用的本地服务：' + hit.map(function (e) { return e.label; }).join('、') + '（点下面任意一条直接套用）')
+        : '✗ 没发现本地模型服务。装了 Ollama / LM Studio 的话先启动它们，再点一次「探测本地模型」。';
+      box.className = 'test-result ' + (hit.length ? 'ok' : 'bad');
+    }
+    if (!list) return;
+    list.innerHTML = '';
+    endpoints.forEach(function (ep) {
+      const row = U.el('div', { class: 'probe-item' + (ep.ok ? ' on' : '') }, [
+        U.el('div', { class: 'pi-main' }, [
+          U.el('div', { class: 'pi-name', text: ep.label + (ep.ok ? '' : '（未启动）') }),
+          U.el('div', { class: 'pi-url', text: ep.baseUrl + (ep.ok && ep.models && ep.models.length ? ' · 模型：' + ep.models.slice(0, 4).join('、') : '') }),
+          ep.ok ? null : U.el('div', { class: 'pi-bad', text: ep.message || '连接不上' })
+        ])
+      ]);
+      if (ep.ok) {
+        row.title = '点击套用这条本地服务';
+        row.addEventListener('click', async function () {
+          const cur = (Store.get() || {}).api || {};
+          const next = Object.assign({}, cur, {
+            baseUrl: ep.baseUrl,
+            apiKey: ep.apiKey || 'local',
+            mode: 'direct',
+            preset: 'local'
+          });
+          if (ep.models && ep.models.length) next.model = ep.models[0];
+          await Store.patch({ api: next });
+          if (els.apiBaseUrl) els.apiBaseUrl.value = next.baseUrl || '';
+          if (els.apiKey) els.apiKey.value = next.apiKey || '';
+          if (els.apiModel) els.apiModel.value = next.model || '';
+          if (window.AIPanel && AIPanel.syncModelSelect) AIPanel.syncModelSelect();
+          if (window.Skills) { try { Skills.syncModeSelect(); } catch (e) { /* ignore */ } }
+          refreshApiStatus();
+          U.toast('已套用 ' + ep.label + (next.model ? ' · ' + next.model : ''), 'success');
+        });
+      }
+      list.appendChild(row);
+    });
+    list.hidden = false;
+  }
+
   function bindGatewaySettings() {
     if (!api || !api.gatewayStatus) return;
 
@@ -1106,7 +1196,6 @@
       const font = s.font || {};
       const apiCfg = s.api || {};
       const ui = s.ui || {};
-      const auto = s.autosave || {};
 
       if (els.wallpaperStatus) {
         els.wallpaperStatus.textContent = wp.type === 'video'
@@ -1124,7 +1213,6 @@
       U.$$('.theme-btn').forEach(function (b) {
         b.classList.toggle('active', b.getAttribute('data-theme') === (s.theme || 'dark'));
       });
-      if (els.autosaveToggle) els.autosaveToggle.checked = auto.enabled !== false;
 
       if (els.fontFamily) {
         const val = font.family || FONT_STACKS['Microsoft YaHei, PingFang SC, sans-serif'];
@@ -1154,6 +1242,12 @@
       if (els.apiVision) els.apiVision.checked = !!apiCfg.supportsVision;
       if (els.apiSystemPrompt) els.apiSystemPrompt.value = apiCfg.systemPrompt || '';
 
+      if (window.Skills) {
+        try { Skills.syncModeSelect(); } catch (e) { /* ignore */ }
+        try { Skills.refresh(); } catch (e) { /* ignore */ }
+        try { Skills.updatePanelButton(); } catch (e) { /* ignore */ }
+      }
+
       refreshGateway();
 
       if (els.aboutVersion) {
@@ -1166,7 +1260,6 @@
       if (els.aboutPaths) {
         const i = appInfo || {};
         els.aboutPaths.textContent = '数据目录：' + (i.userData || '-') +
-          '\n自动存档：' + (i.autosavePath || '-') +
           '\n诊断日志：' + (i.logDir || '-');
         els.aboutPaths.style.whiteSpace = 'pre-wrap';
       }
@@ -1245,12 +1338,28 @@
     if (els.mcpToggle) els.mcpToggle.textContent = st.running ? '关闭 MCP 服务' : '开启 MCP 服务';
     if (els.mcpCopy) els.mcpCopy.disabled = !st.running;
     if (els.mcpConfig) els.mcpConfig.value = st.snippet || '';
-    if (st.dsh) setMcpDshUI(st.dsh);
+    if (st.dsh) setMcpDshUI(st.dsh, st.plugin);
   }
 
   let mcpDshCache = null;
-  function setMcpDshUI(dshInfo) {
+  let mcpPluginCache = null;
+
+  function profilePluginInstalled(name) {
+    const list = (mcpPluginCache && mcpPluginCache.profiles) || [];
+    const hit = list.filter(function (p) { return p.name === name; })[0];
+    return !!(hit && hit.pluginInstalled);
+  }
+
+  function updateMcpPluginButtons() {
+    const name = els.mcpProfile ? els.mcpProfile.value : '';
+    const hasProfiles = !!(mcpDshCache && (mcpDshCache.profiles || []).length);
+    if (els.mcpPluginInstall) els.mcpPluginInstall.disabled = !hasProfiles || profilePluginInstalled(name);
+    if (els.mcpPluginRemove) els.mcpPluginRemove.disabled = !hasProfiles || !profilePluginInstalled(name);
+  }
+
+  function setMcpDshUI(dshInfo, pluginInfo) {
     mcpDshCache = dshInfo || null;
+    if (pluginInfo !== undefined) mcpPluginCache = pluginInfo || null;
     if (els.mcpDshPaths) {
       els.mcpDshPaths.textContent = dshInfo
         ? 'DSH 配置目录：' + dshInfo.home + (dshInfo.profiles && dshInfo.profiles.length
@@ -1265,7 +1374,9 @@
       list.forEach(function (p) {
         const opt = document.createElement('option');
         opt.value = p.name;
-        opt.textContent = p.name + (p.installed ? '（已注册）' : '');
+        opt.textContent = p.name
+          + (profilePluginInstalled(p.name) ? '（已装插件）' : '')
+          + (p.installed ? '（已写 YAML）' : '');
         els.mcpProfile.appendChild(opt);
       });
       if (!list.length) {
@@ -1283,15 +1394,18 @@
         els.mcpDshStatus.className = 'dsh-status bad';
       } else {
         const total = (dshInfo.profiles || []).length;
+        const plug = (dshInfo.profiles || []).filter(function (p) { return profilePluginInstalled(p.name); }).length;
         const done = (dshInfo.profiles || []).filter(function (p) { return p.installed; }).length;
-        els.mcpDshStatus.textContent = done
-          ? '✓ 已注册到 ' + done + ' 个 profile（共 ' + total + ' 个）'
-          : '共 ' + total + ' 个 profile，尚未注册';
-        els.mcpDshStatus.className = 'dsh-status' + (done ? ' ok' : '');
+        let text = '共 ' + total + ' 个 profile，尚未接入';
+        if (plug) text = '✓ 已作为插件安装到 ' + plug + ' 个 profile（共 ' + total + ' 个）' + (done ? '，另有 ' + done + ' 个写了 YAML' : '');
+        else if (done) text = '✓ 已写入 YAML 到 ' + done + ' 个 profile（共 ' + total + ' 个），建议改用插件方式';
+        els.mcpDshStatus.textContent = text;
+        els.mcpDshStatus.className = 'dsh-status' + (plug || done ? ' ok' : '');
       }
     }
     if (els.mcpRegister) els.mcpRegister.disabled = !(dshInfo && dshInfo.exists && (dshInfo.profiles || []).length);
     if (els.mcpUnregister) els.mcpUnregister.disabled = !(dshInfo && (dshInfo.profiles || []).some(function (p) { return p.installed; }));
+    updateMcpPluginButtons();
   }
 
   async function rescanDshProfiles() {
@@ -1394,6 +1508,77 @@
       els.mcpRescan.addEventListener('click', async function () {
         await rescanDshProfiles();
         U.toast('已重新扫描 DSH 配置', 'info');
+      });
+    }
+    if (els.mcpProfile) {
+      els.mcpProfile.addEventListener('change', updateMcpPluginButtons);
+    }
+    if (els.mcpPluginInstall) {
+      els.mcpPluginInstall.addEventListener('click', async function () {
+        const profile = els.mcpProfile ? els.mcpProfile.value : '';
+        if (!profile) { U.toast('没有可用的 DSH profile', 'error'); return; }
+        const old = els.mcpPluginInstall.textContent;
+        els.mcpPluginInstall.disabled = true;
+        els.mcpPluginInstall.textContent = '安装中…';
+        if (els.mcpDshStatus) {
+          els.mcpDshStatus.textContent = '正在把本软件打成 DSH 插件并安装（dsh plugin add）…';
+          els.mcpDshStatus.className = 'dsh-status busy';
+        }
+        try {
+          const res = await api.mcpPluginInstall(profile);
+          if (res && res.status) setMcpDshUI(res.status.dsh, res.plugin || (res.status && res.status.plugin));
+          if (res && res.ok) {
+            U.toast('插件已装进 ' + profile + '，重启 DSH 后就能反向写剧本', 'success');
+            if (els.mcpDshStatus) {
+              els.mcpDshStatus.textContent = '✓ 已安装插件 ' + res.bundle + ' 到 profile「' + profile + '」'
+                + (res.verify && res.verify.detected ? '，--dump-config 已验证' : '，但 --dump-config 没看到条目')
+                + '（插件包目录：' + res.dir + '）';
+              els.mcpDshStatus.className = 'dsh-status' + (res.verify && res.verify.detected ? ' ok' : ' bad');
+            }
+          } else {
+            U.toast((res && res.error) || '安装失败', 'error');
+            if (els.mcpDshStatus) {
+              els.mcpDshStatus.textContent = '✗ ' + ((res && res.error) || '安装失败');
+              els.mcpDshStatus.className = 'dsh-status bad';
+            }
+          }
+        } catch (err) {
+          U.toast('安装失败：' + ((err && err.message) || err), 'error');
+        } finally {
+          els.mcpPluginInstall.textContent = old;
+          updateMcpPluginButtons();
+        }
+      });
+    }
+    if (els.mcpPluginRemove) {
+      els.mcpPluginRemove.addEventListener('click', async function () {
+        const profile = els.mcpProfile ? els.mcpProfile.value : '';
+        if (!profile) return;
+        const yes = await U.confirmBox({
+          title: '卸载插件',
+          message: '要把本软件的 MCP 插件从 DSH 的 profile「' + profile + '」里卸载吗？（执行 dsh plugin remove，DSH 自己会把配置还原）',
+          okText: '卸载插件',
+          danger: true
+        });
+        if (!yes) return;
+        els.mcpPluginRemove.disabled = true;
+        try {
+          const res = await api.mcpPluginRemove(profile);
+          if (res && res.status) setMcpDshUI(res.status.dsh, res.plugin || (res.status && res.status.plugin));
+          if (res && res.ok) {
+            U.toast('插件已卸载', 'success');
+            if (els.mcpDshStatus) {
+              els.mcpDshStatus.textContent = '已从 profile「' + profile + '」卸载插件';
+              els.mcpDshStatus.className = 'dsh-status';
+            }
+          } else {
+            U.toast((res && res.error) || '卸载失败', 'error');
+          }
+        } catch (err) {
+          U.toast('卸载失败：' + ((err && err.message) || err), 'error');
+        } finally {
+          updateMcpPluginButtons();
+        }
       });
     }
     if (els.mcpRegister) {
@@ -1703,14 +1888,6 @@
         U.$$('.theme-btn').forEach(function (x) { x.classList.toggle('active', x === b); });
       });
     });
-    if (els.autosaveToggle) {
-      els.autosaveToggle.addEventListener('change', function () {
-        Store.patch({ autosave: { enabled: els.autosaveToggle.checked } });
-        startAutosave();
-        U.toast(els.autosaveToggle.checked ? '已开启自动存档（每 15 秒）' : '已关闭自动存档', 'success');
-      });
-    }
-
     /* 排版 */
     if (els.fontFamily) {
       els.fontFamily.addEventListener('change', function () {
@@ -1846,6 +2023,36 @@
       });
     }
 
+    /* AI 一键预设 + 探测本地模型 */
+    const presetRow = U.$('#presetRow');
+    if (presetRow) {
+      presetRow.addEventListener('click', function (e) {
+        const btn = e.target.closest ? e.target.closest('[data-preset]') : null;
+        if (!btn) return;
+        applyApiPreset(btn.getAttribute('data-preset'));
+      });
+    }
+    const probeLocal = U.$('#probeLocal');
+    if (probeLocal) {
+      probeLocal.addEventListener('click', async function () {
+        if (probeLocal.disabled) return;
+        probeLocal.disabled = true;
+        const oldText = probeLocal.textContent;
+        probeLocal.textContent = '探测中…';
+        const box = U.$('#probeResult');
+        if (box) { box.textContent = '正在探测本机常见的本地模型服务（Ollama / LM Studio / llama.cpp …）'; box.className = 'test-result'; }
+        try {
+          const res = await api.probeLocalModels();
+          renderProbeResult(res);
+        } catch (err) {
+          if (box) { box.textContent = '✗ 探测失败：' + (err && err.message ? err.message : err); box.className = 'test-result bad'; }
+        } finally {
+          probeLocal.disabled = false;
+          probeLocal.textContent = oldText || '探测本地模型';
+        }
+      });
+    }
+
     /* 字数弹窗 */
     if (els.countModal) {
       els.countModal.addEventListener('click', function (e) {
@@ -1910,49 +2117,20 @@
     box.appendChild(clear);
   }
 
-  /* ---------------- 自动存档 ---------------- */
-  function autosavePayload() {
-    Workspace.syncActive();
-    const docs = Workspace.list().map(function (d) {
-      return {
-        filePath: d.filePath || null,
-        dirty: !!d.dirty,
-        model: d.model
-      };
-    });
-    return { docs: docs, activeId: Workspace.getActiveId(), at: Date.now() };
-  }
-
-  // 老版本（1.0/1.1）的新建剧本自带三幕示例文案；升级后不该再把这些示例当成"用户的工作记录"恢复出来
-  const LEGACY_SAMPLE_TITLES = ['第一幕：风起', '第二幕：暗流', '第三幕：决战'];
-  function isLegacySampleDoc(model, filePath) {
-    if (filePath) return false;
-    const acts = (model && Array.isArray(model.acts)) ? model.acts : [];
-    if (acts.length !== 3) return false;
-    for (let i = 0; i < 3; i++) {
-      if (String(acts[i].title || '').trim() !== LEGACY_SAMPLE_TITLES[i]) return false;
-    }
-    const text = acts.map(function (a) { return Project.htmlToText(a && a.html) || ''; }).join('');
-    // 真写过东西的就不算示例了
-    return U.countWords(text) < 200;
-  }
-
-  // 判断一份文档是不是「纯空白草稿」：没有任何文字，也从没保存过
-  function docIsBlank(model, filePath) {
-    if (filePath) return false;
-    if (!model || !Array.isArray(model.acts)) return true;
-    const text = model.acts.map(function (a) { return Project.htmlToText(a && a.html) || ''; }).join('');
-    if (text.trim()) return false;
-    const title = (model.meta && model.meta.title) || '';
-    // 改过名字也算有内容（用户建了名还没写）
-    if (title && title !== '未命名剧本' && title !== '新建剧本') return false;
-    return true;
+  /* ---------------- 未保存草稿：不跨启动保留 ----------------
+   * 1.1.8 起按用户要求改掉了老行为：没保存成 .aisc 的剧本，关掉软件就该消失，
+   * 下次启动不再把上次的草稿、那个剧本的标签页恢复出来。
+   * 以前版本留在磁盘上的 autosave.json 也会在启动时清掉。
+   */
+  async function discardOldDrafts() {
+    if (!api.autosaveClear) return;
+    try { await api.autosaveClear(); } catch (err) { /* ignore */ }
   }
 
   /* ---------------- 工作现场（上次打开的文件） ---------------- */
   let sessionTimer = null;
 
-  // 只记「有磁盘落点」的剧本：未保存的新剧本由自动存档负责
+  // 只记「有磁盘落点」的剧本：没保存过的新剧本不记账（关掉就消失）
   function sessionPayload() {
     Workspace.syncActive();
     const list = Workspace.list();
@@ -1978,7 +2156,7 @@
     } catch (err) { /* ignore */ }
   }
 
-  // 把上次打开过的文件重新打开（不弹提示、不覆盖已恢复的草稿）
+  // 把上次打开过的文件重新打开（不弹提示、不打断当前文档）
   async function restoreFiles(saved) {
     if (!saved || !Array.isArray(saved.files) || !saved.files.length) return 0;
     let opened = 0;
@@ -2002,70 +2180,6 @@
       try { saveSessionNow(); } catch (err) { /* ignore */ }
     }
     return opened;
-  }
-
-  async function writeAutosave() {
-    if (!Workspace.count()) { saveSessionNow(); return; }
-    saveSessionSoon();
-    Workspace.syncActive();
-    // 只有真正有内容或有磁盘落点的文档才写自动存档，避免「空白草稿」下次启动被恢复出来
-    const useful = Workspace.list().filter(function (d) { return d.dirty && !docIsBlank(d.model, d.filePath); });
-    if (!useful.length) return;
-    try {
-      await api.autosaveWrite(autosavePayload());
-    } catch (err) {
-      console.warn('[autosave]', err);
-    }
-  }
-
-  // 每次完成自动存档后顺手记一次工作现场
-  function startAutosave() {
-    if (autosaveTimer) { clearInterval(autosaveTimer); autosaveTimer = null; }
-    const cfg = (Store.get() || {}).autosave || {};
-    if (cfg.enabled === false) return;
-    const ms = U.clamp(Number(cfg.intervalMs) || 15000, 5000, 300000);
-    autosaveTimer = setInterval(writeAutosave, ms);
-  }
-
-  async function restoreSession() {
-    let saved = null;
-    try {
-      saved = await api.autosaveRead();
-    } catch (err) {
-      console.warn('[autosave:read]', err);
-    }
-    const list = [];
-    if (saved && Array.isArray(saved.docs)) {
-      saved.docs.forEach(function (d) {
-        if (!d || !d.model || !Array.isArray(d.model.acts) || !d.model.acts.length) return;
-        // 空白草稿（自动存档时还没写字的空剧本）直接丢弃，不要把首启变成「新建剧本」
-        if (docIsBlank(d.model, d.filePath)) return;
-        // 旧版本自带的「第一幕：风起 / 第二幕：暗流 / 第三幕：决战」示例稿也丢弃
-        if (isLegacySampleDoc(d.model, d.filePath)) return;
-        list.push(d);
-      });
-    } else if (saved && saved.project && Array.isArray(saved.project.acts) && saved.project.acts.length) {
-      if (!docIsBlank(saved.project, saved.filePath) && !isLegacySampleDoc(saved.project, saved.filePath)) {
-        list.push({ model: saved.project, filePath: saved.filePath || null, dirty: true });
-      }
-    }
-    if (!list.length) {
-      // 存档里全是空白草稿：清掉，回到干净的欢迎页
-      try { await api.autosaveClear(); } catch (err) { /* ignore */ }
-      return false;
-    }
-    // 只保留有意义的那几个，顺手把存档重写成精简后的版本
-    saved = { docs: list, activeId: saved && saved.activeId, at: Date.now() };
-    list.forEach(function (d, i) {
-      Workspace.create(Project.normalize(d.model), d.filePath || null, {
-        dirty: d.dirty !== false,
-        activate: i === 0
-      });
-    });
-    if (saved && saved.activeId && Workspace.getById(saved.activeId)) {
-      Workspace.activate(saved.activeId);
-    }
-    return true;
   }
 
   /* ---------------- 工作区状态（欢迎页 / 三栏） ---------------- */
@@ -2164,17 +2278,19 @@
     Outline.init();
     AIPanel.init();
     Find.init();
+    if (window.Skills) Skills.init();
     if (window.Tabs) Tabs.init();
     if (window.OutlineFloat) OutlineFloat.init();
     if (window.DshGen) DshGen.init();
 
-    const restoredDraft = await restoreSession();
+    // 上次没保存成 .aisc 的草稿一律丢弃（用户要求：关掉就该消失）
+    await discardOldDrafts();
     let restoredFiles = 0;
     try {
       const saved = api.sessionRead ? await api.sessionRead() : null;
       restoredFiles = await restoreFiles(saved);
     } catch (err) { /* ignore */ }
-    const restored = restoredDraft || restoredFiles > 0;
+    const restored = restoredFiles > 0;
     if (restored) {
       refreshAll('已回到上次的工作现场（' + Workspace.count() + ' 个剧本）');
     } else {
@@ -2182,7 +2298,6 @@
     }
 
     renderRecent();
-    startAutosave();
     refreshApiStatus();
     applyRulerVisibility();
     detectDsh(false);
@@ -2209,14 +2324,6 @@
 
     window.addEventListener('beforeunload', function () {
       try { saveSessionNow(); } catch (e) { /* ignore */ }
-      if (!Workspace.count() || !api.autosaveWrite) return;
-      try {
-        const payload = autosavePayload();
-        if (payload.docs.some(function (d) { return d.dirty; })) api.autosaveWrite(payload);
-      } catch (e) { /* ignore */ }
-    });
-    document.addEventListener('visibilitychange', function () {
-      if (document.visibilityState === 'hidden') writeAutosave();
     });
 
     hideSplash();

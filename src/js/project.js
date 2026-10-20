@@ -48,7 +48,7 @@
       meta: Object.assign({ title: '未命名剧本', author: '', createdAt: nowIso(), updatedAt: nowIso(), summary: '' }, raw.meta || {}),
       acts: [],
       activeActId: raw.activeActId || null,
-      outline: Array.isArray(raw.outline) ? raw.outline : [],
+      outline: (Array.isArray(raw.outline) ? raw.outline : []).map(normOutlineItem),
       history: Array.isArray(raw.history) ? raw.history.slice(0, 80) : []
     };
     const acts = Array.isArray(raw.acts) ? raw.acts : [];
@@ -244,6 +244,16 @@
         has: has
       };
     });
+  }
+
+  function sectionText(actId, secId) {
+    const act = getAct(actId);
+    if (!act) return '';
+    const { groups } = splitBlocks(act.html);
+    const g = groups.find((x) => sectionKey(x.heading, x.ordinal) === secId);
+    if (!g) return '';
+    return g.nodes.map(function (n) { return (n.textContent || ''); })
+      .join('\n').replace(/\u00a0/g, ' ').trim();
   }
 
   function sectionTitleOf(act, key) {
@@ -447,6 +457,244 @@
     };
   }
 
+  /** 把 AI 写的一段正文追加到指定小节的末尾（找不到该小节就返回 false） */
+  function appendToSection(actId, secId, text) {
+    const act = getAct(actId);
+    if (!act) return false;
+    const { div, groups } = splitBlocks(act.html);
+    const g = groups.find((x) => sectionKey(x.heading, x.ordinal) === secId);
+    if (!g) return false;
+    const paras = String(text || '').replace(/\r\n?/g, '\n').split(/\n{1,}/)
+      .map((s) => s.trim()).filter(function (s) { return !!s; });
+    if (!paras.length) return false;
+    const frag = document.createDocumentFragment();
+    paras.forEach(function (t) {
+      const p = document.createElement('p');
+      p.textContent = t.replace(/^#+\s*/, '');
+      frag.appendChild(p);
+    });
+    const last = g.nodes.length ? g.nodes[g.nodes.length - 1] : g.heading;
+    const anchor = last && last.parentNode ? last.nextSibling : null;
+    if (anchor && anchor.parentNode === div) div.insertBefore(frag, anchor);
+    else div.appendChild(frag);
+    act.html = div.innerHTML;
+    markDirty();
+    return true;
+  }
+
+  /* ---------- 计划大纲（作者先建 / 导入，再让 AI 跟着写） ---------- */
+  function normOutlineItem(it, i) {
+    const level = (it && Number(it.level) === 2) ? 2 : 1;
+    return {
+      id: (it && it.id) || U.uid('ol'),
+      title: String((it && it.title) || ('节点 ' + (i + 1))).replace(/\s+/g, ' ').trim(),
+      note: String((it && it.note) || '').trim(),
+      level: level,
+      actId: (it && it.actId) || null,
+      secId: (it && it.secId) || null
+    };
+  }
+
+  function outlineList() {
+    if (!project) return [];
+    if (!Array.isArray(project.outline)) project.outline = [];
+    return project.outline;
+  }
+
+  function setOutlineItems(items) {
+    if (!project) return [];
+    project.outline = (Array.isArray(items) ? items : []).map(normOutlineItem);
+    markDirty();
+    return project.outline;
+  }
+
+  function addOutlineItem(patch) {
+    const items = outlineList();
+    const item = normOutlineItem(Object.assign({}, patch || {}, { level: (patch && patch.level) || 2 }), items.length);
+    const afterId = patch && patch.afterId;
+    const idx = afterId ? items.findIndex(it => it.id === afterId) : -1;
+    if (idx >= 0) items.splice(idx + 1, 0, item);
+    else items.push(item);
+    markDirty();
+    return item;
+  }
+
+  function updateOutlineItem(id, patch) {
+    const items = outlineList();
+    const item = items.find(it => it.id === id);
+    if (!item) return null;
+    Object.assign(item, patch || {});
+    if (item.level !== 2) item.level = 1;
+    item.title = String(item.title || '').trim();
+    item.note = String(item.note || '').trim();
+    markDirty();
+    return item;
+  }
+
+  function removeOutlineItem(id) {
+    const items = outlineList();
+    const idx = items.findIndex(it => it.id === id);
+    if (idx < 0) return false;
+    items.splice(idx, 1);
+    markDirty();
+    return true;
+  }
+
+  function moveOutlineItem(id, dir) {
+    const items = outlineList();
+    const idx = items.findIndex(it => it.id === id);
+    if (idx < 0) return false;
+    const to = idx + (dir === 'up' ? -1 : 1);
+    if (to < 0 || to >= items.length) return false;
+    const [item] = items.splice(idx, 1);
+    items.splice(to, 0, item);
+    markDirty();
+    return true;
+  }
+
+  function outlineToText() {
+    const items = outlineList();
+    if (!items.length) return '';
+    return items.map(function (it) {
+      return (it.level === 1 ? '## ' : '- ') + it.title + (it.note ? '：' + it.note : '');
+    }).join('\n');
+  }
+
+  /** 从任意常见文本里抽取大纲：Markdown 标题、第N章/幕/节/场、列表项、普通短行都能认 */
+  function parseOutlineText(raw) {
+    const lines = String(raw || '').replace(/\r\n?/g, '\n').split('\n');
+    const items = [];
+    let hasLevel1 = false;
+    function splitTitleNote(s) {
+      const t = String(s || '').trim().replace(/^[-*+·•\s]+/, '').replace(/\s+#+$/, '').trim();
+      const idx = t.search(/[：:]/);
+      if (idx >= 6 && idx < t.length - 1) {
+        return { title: t.slice(0, idx).trim(), note: t.slice(idx + 1).trim() };
+      }
+      return { title: t, note: '' };
+    }
+    function push(title, note, level) {
+      const text = String(title || '').trim();
+      if (!text) return;
+      if (level === 1) hasLevel1 = true;
+      items.push(normOutlineItem({ title: text, note: note || '', level: level || 1 }, items.length));
+    }
+    lines.forEach(function (lineIn) {
+      const line = String(lineIn || '').trim();
+      if (!line) return;
+      let m = /^(#{1,6})\s+(.*)$/.exec(line);
+      if (m) {
+        const depth = m[1].length;
+        const parts = splitTitleNote(m[2]);
+        if (!parts.title) return;
+        if (depth === 1 && !items.length) { push(parts.title, '整篇标题', 1); return; }
+        push(parts.title, parts.note, depth <= 2 ? 1 : 2);
+        return;
+      }
+      m = /^第\s*([0-9一二三四五六七八九十百零〇]+)\s*([章幕回卷节场])\s*[：:.、\-—]?\s*(.*)$/.exec(line);
+      if (m) {
+        const isScene = (m[2] === '节' || m[2] === '场');
+        const parts = splitTitleNote(m[3] || '');
+        const title = '第' + m[1] + m[2] + (parts.title ? ' ' + parts.title : '');
+        push(title, parts.note, isScene ? 2 : 1);
+        return;
+      }
+      m = /^(?:[-*+·•]|[0-9]+[.、)）]|[（(][0-9一二三四五六七八九十]+[)）])\s*(.*)$/.exec(line);
+      if (m) {
+        const parts = splitTitleNote(m[1]);
+        if (parts.title) push(parts.title, parts.note, hasLevel1 ? 2 : 1);
+        return;
+      }
+      const parts = splitTitleNote(line);
+      if (parts.title && parts.title.length <= 60) push(parts.title, parts.note, hasLevel1 ? 2 : 1);
+    });
+    return items;
+  }
+
+  function findActByTitle(title) {
+    if (!project || !title) return null;
+    const t = String(title).trim();
+    return project.acts.find(a => String(a.title || '').trim() === t) ||
+      project.acts.find(a => String(a.title || '').indexOf(t) >= 0) || null;
+  }
+
+  /** 把计划大纲落成真实目录：章对章、节对节，已有的复用不动，缺的新建 */
+  function applyOutlineToActs() {
+    if (!project) return { acts: 0, sections: 0 };
+    const items = outlineList();
+    let createdActs = 0;
+    let createdSections = 0;
+    let lastAct = null;
+    let reusedEmpty = false;
+    const onlyEmptyAct = project.acts.length === 1 && !(project.acts[0].html || '').replace(/<[^>]+>/g, '').trim();
+
+    items.forEach(function (it) {
+      if (it.level === 1) {
+        let act = findActByTitle(it.title);
+        if (!act && onlyEmptyAct && !reusedEmpty && createdActs === 0 && project.acts[0].id === project.activeActId) {
+          act = project.acts[0];
+          act.title = it.title;
+          reusedEmpty = true;
+          createdActs++;
+          markDirty();
+        }
+        if (!act) {
+          act = addAct(it.title);
+          createdActs++;
+        }
+        if (!it.actId) { it.actId = act.id; markDirty(); }
+        lastAct = act;
+        return;
+      }
+      const act = (it.actId ? getAct(it.actId) : null) || lastAct || getAct();
+      if (!act) return;
+      const secs = sectionsOfAct(act);
+      const found = secs.find(s => String(s.title || '').trim() === it.title) ||
+        secs.find(s => String(s.title || '').trim().indexOf(it.title) >= 0);
+      if (found) {
+        if (it.secId !== found.id || it.actId !== act.id) {
+          it.actId = act.id;
+          it.secId = found.id;
+          markDirty();
+        }
+        return;
+      }
+      const sec = insertSection(act.id, it.title);
+      if (sec) {
+        it.actId = act.id;
+        it.secId = sec.id;
+        createdSections++;
+        markDirty();
+      }
+    });
+    return { acts: createdActs, sections: createdSections };
+  }
+
+  /** 每个计划节点当前写到哪：自动按标题回填关联，标出是否已写、多少字 */
+  function outlineProgress() {
+    if (!project) return [];
+    return outlineList().map(function (it, i) {
+      let act = it.actId ? getAct(it.actId) : null;
+      if (!act && it.level === 1) act = findActByTitle(it.title);
+      if (!act && it.level === 2) act = getAct() || null;
+      let sec = null;
+      if (act) {
+        const secs = sectionsOfAct(act);
+        sec = (it.secId ? secs.find(s => s.id === it.secId) : null) ||
+          secs.find(s => String(s.title || '').trim() === it.title) || null;
+      }
+      return {
+        item: it,
+        index: i,
+        act: act,
+        sec: sec,
+        linked: it.level === 1 ? !!act : !!(act && sec),
+        written: !!(sec && sec.has),
+        words: sec ? sec.words : 0
+      };
+    });
+  }
+
   /* ---------- AI 记录 ---------- */
   function addHistory(entry) {
     if (!project) return null;
@@ -489,6 +737,9 @@
     splitBlocks, sectionsOfAct, sectionTitleOf, insertSection, renameSection, removeSection, moveSection,
     actFromSections, newSectionId,
     stats, htmlToText, blocksOfAct, toExportPayload, toSaveObject,
-    addHistory, updateHistory, clearHistory
+    addHistory, updateHistory, clearHistory,
+    appendToSection, sectionText,
+    outlineList, setOutlineItems, addOutlineItem, updateOutlineItem, removeOutlineItem,
+    moveOutlineItem, outlineToText, parseOutlineText, applyOutlineToActs, outlineProgress
   };
 })();

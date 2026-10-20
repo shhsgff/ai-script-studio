@@ -65,6 +65,14 @@ contextBridge.exposeInMainWorld('api', {
   aiStart: (payload) => ipcRenderer.invoke('ai:start', payload),
   aiAbort: (id) => ipcRenderer.invoke('ai:abort', id),
   aiTest: (override) => ipcRenderer.invoke('ai:test', override),
+  probeLocalModels: () => ipcRenderer.invoke('ai:probeLocal'),
+
+  // 技能库（DSH 能看到的本地 Skill）
+  skillsList: () => ipcRenderer.invoke('skills:list'),
+  skillsRead: (file) => ipcRenderer.invoke('skills:read', file),
+  skillsSave: (payload) => ipcRenderer.invoke('skills:save', payload),
+  skillsRemove: (file) => ipcRenderer.invoke('skills:remove', file),
+  skillsOpenFolder: () => ipcRenderer.invoke('skills:openFolder'),
   onAiEvent: (cb) => on('ai:event', cb),
 
   // 本地 DeepSeek Harness
@@ -79,6 +87,8 @@ contextBridge.exposeInMainWorld('api', {
   mcpDshStatus: () => ipcRenderer.invoke('mcp:dshStatus'),
   mcpDshInstall: (profile) => ipcRenderer.invoke('mcp:dshInstall', profile),
   mcpDshUninstall: (profile) => ipcRenderer.invoke('mcp:dshUninstall', profile),
+  mcpPluginInstall: (profile) => ipcRenderer.invoke('mcp:pluginInstall', profile),
+  mcpPluginRemove: (profile) => ipcRenderer.invoke('mcp:pluginRemove', profile),
   mcpEnable: () => ipcRenderer.invoke('mcp:enable'),
   mcpDisable: () => ipcRenderer.invoke('mcp:disable'),
   onMcpRequest: (cb) => on('mcp:request', cb),

@@ -10,6 +10,7 @@ const PIECES = ['改写后的', '第一句。', '第二句，', '更凝练。'];
 function startMockAI() {
   let lastBody = null;
   let lastUrl = '';
+  const bodies = [];
 
   const server = http.createServer((req, res) => {
     let body = '';
@@ -27,6 +28,8 @@ function startMockAI() {
         return;
       }
       try { lastBody = JSON.parse(body); } catch (e) { lastBody = { raw: body }; }
+      bodies.push(lastBody);
+      if (bodies.length > 20) bodies.shift();
 
       res.writeHead(200, {
         'content-type': 'text/event-stream; charset=utf-8',
@@ -75,6 +78,7 @@ function startMockAI() {
         badUrl: 'http://127.0.0.1:' + port + '/bad/v1',
         expectText: PIECES.join(''),
         lastBody: () => lastBody,
+        allBodies: () => bodies.slice(),
         lastUrl: () => lastUrl,
         close: () => new Promise((r) => server.close(() => r()))
       });

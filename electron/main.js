@@ -15,6 +15,8 @@ const crypto = require('node:crypto');
 const os = require('node:os');
 const dsh = require('./dsh');
 const dshMcp = require('./dsh-mcp');
+const dshPlugin = require('./dsh-plugin');
+const skillLib = require('./skills');
 const localGatewayMod = require('./local-gateway');
 const IS_DEV = process.argv.includes('--dev');
 const SMOKE = process.argv.includes('--smoke');
@@ -45,6 +47,28 @@ const BACKUP_DIR = path.join(USER_DIR, 'backups');
 const LOG_DIR = path.join(USER_DIR, 'logs');
 const LOG_FILE = path.join(LOG_DIR, 'app.log');
 const CHILDREN_FILE = path.join(USER_DIR, 'children.json');
+
+// 回归测试：故意在冒烟/截图模式下留一份「上次没保存的草稿」，
+// 用来验证启动时不再恢复它（1.1.8 用户要求：没保存的剧本关掉就消失）。
+if (SMOKE) {
+  try {
+    fs.writeFileSync(AUTOSAVE_FILE, JSON.stringify({
+      docs: [{
+        filePath: null,
+        dirty: true,
+        model: {
+          version: 1,
+          meta: { title: '上次没保存的草稿' },
+          acts: [{ id: 'a1', title: '第一章', html: '<p>这段文字本来没保存</p>' }],
+          activeActId: 'a1',
+          history: []
+        }
+      }],
+      activeId: 'x',
+      at: Date.now()
+    }));
+  } catch (e) { /* ignore */ }
+}
 
 // 清理上次异常退出残留的临时写入文件（JSON 原子写入的中间态）
 try {
@@ -123,7 +147,12 @@ const DEFAULT_SETTINGS = {
     temperature: 0.8,
     maxTokens: 4096,
     systemPrompt: '你是一位资深的中文编剧，擅长小说与剧本写作。请严格只输出改写后的正文内容，不要输出任何解释、前缀、代码块标记或免责声明。',
-    supportsVision: false
+    supportsVision: false,
+    // direct = 直接请求模型（快、流式）；agent = 交给本机 dsh（能加载 Skill、能跑工具）
+    mode: 'direct',
+    skills: [],
+    agentTimeoutSec: 300,
+    preset: ''
   },
   ui: {
     showRuler: true,
@@ -937,13 +966,127 @@ async function runAI(jobId, payload) {
   }
 }
 
+/* ---------- 本地模型（Ollama / LM Studio / llama.cpp …）探测 ---------- */
+const LOCAL_ENDPOINTS = [
+  { label: 'Ollama', baseUrl: 'http://127.0.0.1:11434/v1', apiKey: 'ollama' },
+  { label: 'LM Studio', baseUrl: 'http://127.0.0.1:1234/v1', apiKey: 'lm-studio' },
+  { label: 'llama.cpp / llamafile', baseUrl: 'http://127.0.0.1:8080/v1', apiKey: '' },
+  { label: 'Jan', baseUrl: 'http://127.0.0.1:1337/v1', apiKey: '' },
+  { label: 'vLLM / OpenAI 兼容', baseUrl: 'http://127.0.0.1:8000/v1', apiKey: '' },
+  { label: 'text-generation-webui', baseUrl: 'http://127.0.0.1:5000/v1', apiKey: '' }
+];
+
+async function probeLocalEndpoint(ep) {
+  const { net } = require('electron');
+  const controller = new AbortController();
+  const timer = setTimeout(function () { try { controller.abort(); } catch (e) {} }, 2200);
+  try {
+    const headers = {};
+    if (ep.apiKey) headers.Authorization = 'Bearer ' + ep.apiKey;
+    const resp = await net.fetch(String(ep.baseUrl).replace(/\/+$/, '') + '/models', {
+      method: 'GET', headers: headers, signal: controller.signal
+    });
+    if (!resp.ok) {
+      return { label: ep.label, baseUrl: ep.baseUrl, apiKey: ep.apiKey, ok: false, message: 'HTTP ' + resp.status + '（服务在跑但接口不对？）', models: [] };
+    }
+    const text = await resp.text();
+    let models = [];
+    try {
+      const j = JSON.parse(text);
+      models = (j.data || j.models || []).map(function (m) { return (m && (m.id || m.name)) || ''; }).filter(Boolean);
+    } catch (e) { models = []; }
+    return { label: ep.label, baseUrl: ep.baseUrl, apiKey: ep.apiKey, ok: true, models: models, message: models.length ? ('发现 ' + models.length + ' 个模型') : '已连接，但没有列到模型' };
+  } catch (err) {
+    const aborted = err && err.name === 'AbortError';
+    return { label: ep.label, baseUrl: ep.baseUrl, apiKey: ep.apiKey, ok: false, models: [], message: aborted ? '超时（未运行）' : '未运行' };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+ipcMain.handle('ai:probeLocal', async () => {
+  const list = await Promise.all(LOCAL_ENDPOINTS.map(probeLocalEndpoint));
+  return { ok: true, endpoints: list };
+});
+
+/* ---------- 技能库 ---------- */
+ipcMain.handle('skills:list', () => {
+  try { return skillLib.list(); } catch (e) { return { ok: false, error: String((e && e.message) || e), items: [] }; }
+});
+ipcMain.handle('skills:read', (event, file) => {
+  try { return skillLib.read(file); } catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+});
+ipcMain.handle('skills:save', (event, payload) => {
+  try {
+    const res = skillLib.save(payload || {});
+    if (res.ok) logLine('skills', 'save ' + res.file);
+    return res;
+  } catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+});
+ipcMain.handle('skills:remove', (event, file) => {
+  try { return skillLib.remove(file); } catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+});
+ipcMain.handle('skills:openFolder', async () => {
+  const dir = skillLib.ensureRoot();
+  try { await shell.openPath(dir); } catch (e) { /* ignore */ }
+  return { ok: true, dir: dir };
+});
+
+/* ---------- Agent 模式：把改写任务交给本机 dsh（能加载 Skill、能跑工具） ---------- */
+const agentJobs = new Map();
+
+async function runAgent(jobId, payload) {
+  const emit = (data) => {
+    if (SMOKE) console.log('SMOKE_AGENT_EVENT ' + (data && data.type) + ' ' + ((data && (data.text || data.message)) || '').length);
+    sendToRenderer('ai:event', Object.assign({ id: jobId }, data));
+  };
+  const skillNames = Array.isArray(payload.skills) ? payload.skills.filter(Boolean) : [];
+  let header = '';
+  if (skillNames.length) {
+    header += '【本次必须遵守的技能】' + skillNames.join('、') + '\n' +
+      '先用 skill 工具加载上面这些技能的正文，严格按其中的规则处理下面的文字。\n\n';
+  }
+  const task = header + String(payload.task || '');
+  if (!task.trim()) { emit({ type: 'error', message: 'Agent 任务为空' }); return; }
+  let job = null;
+  try {
+    job = dsh.run({
+      command: dshCommand(payload.command),
+      task: task,
+      cwd: os.tmpdir(),
+      timeoutMs: Math.max(60000, Math.min(900000, payload.timeoutMs || 300000)),
+      onEvent: function (type, p) {
+        if (type === 'text' && p && p.text) emit({ type: 'delta', text: p.text });
+        else if (type === 'status' && p && p.text) emit({ type: 'status', message: p.text });
+        else if (type === 'error' && p && p.message) emit({ type: 'error', message: 'dsh：' + p.message });
+      }
+    });
+  } catch (e) {
+    emit({ type: 'error', message: '无法启动本地 dsh：' + String((e && e.message) || e) });
+    return;
+  }
+  agentJobs.set(jobId, job);
+  try {
+    const res = await job.promise;
+    if (res.ok) emit({ type: 'done', text: res.text, model: 'dsh-agent', usage: {} });
+    else if (res.aborted) emit({ type: 'aborted', text: res.text || '' });
+    else emit({ type: 'error', message: res.error || 'Agent 执行失败（本机 dsh 没有返回内容）' });
+  } finally {
+    agentJobs.delete(jobId);
+  }
+}
+
 ipcMain.handle('ai:start', (event, payload) => {
   const jobId = (payload && payload.id) || crypto.randomUUID();
-  runAI(jobId, payload || {});
+  const p = payload || {};
+  if (p.mode === 'agent') runAgent(jobId, p);
+  else runAI(jobId, p);
   return { id: jobId };
 });
 
 ipcMain.handle('ai:abort', (event, jobId) => {
+  const agentJob = agentJobs.get(jobId);
+  if (agentJob) { try { agentJob.abort(); } catch (e) {} return true; }
   const controller = aiJobs.get(jobId);
   if (controller) { try { controller.abort(); } catch (e) {} }
   return true;
@@ -1125,6 +1268,7 @@ function mcpStatus() {
     configFile: MCP_CONFIG_FILE,
     snippet: mcpSnippet(),
     snippetJson: mcpSnippetJson(),
+    plugin: dshPlugin.status(),
     command: 'node "' + MCP_SERVER_FILE + '" "' + MCP_CONFIG_FILE + '"',
     dsh: dshMcp.status()
   };
@@ -1196,6 +1340,39 @@ ipcMain.handle('mcp:dshInstall', async (event, profileName) => {
     return res;
   } catch (e) {
     return { ok: false, error: '注册失败：' + ((e && e.message) || e) };
+  }
+});
+
+/* --- 做成真正的 DSH 插件（bundle）：dsh plugin add <生成目录> --- */
+ipcMain.handle('mcp:pluginInstall', async (event, profileName) => {
+  try {
+    if (!profileName) return { ok: false, error: '没有选择 profile' };
+    ensureMcpFiles();
+    await startMcpBridge().catch(function () { /* 桥起不来不阻塞插件安装 */ });
+    const res = await dshPlugin.install({
+      profile: profileName,
+      baseDir: USER_DIR,
+      serverFile: MCP_SERVER_FILE,
+      configFile: MCP_CONFIG_FILE,
+      command: dshCommand()
+    });
+    res.plugin = dshPlugin.status();
+    res.status = mcpStatus();
+    return res;
+  } catch (e) {
+    return { ok: false, error: '安装插件失败：' + ((e && e.message) || e) };
+  }
+});
+
+ipcMain.handle('mcp:pluginRemove', async (event, profileName) => {
+  try {
+    if (!profileName) return { ok: false, error: '没有选择 profile' };
+    const res = await dshPlugin.uninstall({ profile: profileName, command: dshCommand() });
+    res.plugin = dshPlugin.status();
+    res.status = mcpStatus();
+    return res;
+  } catch (e) {
+    return { ok: false, error: '卸载插件失败：' + ((e && e.message) || e) };
   }
 });
 

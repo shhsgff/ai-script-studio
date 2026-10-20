@@ -41,6 +41,12 @@
     await wait(120);
     R.workspace = Workspace.count();
     assert('启动时没有文档', Workspace.count() === 0, Workspace.count());
+    // 主进程在冒烟模式下预置了一份「上次没保存的草稿」，启动后必须已经被丢掉
+    const leftDraft = window.api.autosaveRead ? await window.api.autosaveRead() : null;
+    R.leftDraft = leftDraft && leftDraft.docs ? leftDraft.docs.length : 0;
+    assert('启动时丢弃上次未保存的草稿', !leftDraft, leftDraft);
+    assert('没有恢复未保存剧本的标签页', document.querySelectorAll('#tabBar .doc-tab').length === 0, document.querySelectorAll('#tabBar .doc-tab').length);
+    assert('设置里不再有自动存档开关', !document.querySelector('#autosaveToggle'));
     assert('欢迎页可见', !document.getElementById('welcome').hidden);
     assert('目录栏隐藏', document.getElementById('sidebarLeft').hidden);
     assert('AI 面板隐藏', document.getElementById('sidebarRight').hidden);
@@ -289,6 +295,14 @@
     assert('有 profile 选择框', !!profSel);
     R.mcpProfiles = profSel ? Array.from(profSel.options).map((o) => o.value) : [];
     R.mcpProfilesFound = R.mcpProfiles.length;
+
+    // 插件方式（dsh plugin add）
+    assert('有「安装为 DSH 插件」按钮', !!document.getElementById('mcpPluginInstall'));
+    assert('插件通道已暴露到页面', window.api && typeof window.api.mcpPluginInstall === 'function' && typeof window.api.mcpPluginRemove === 'function');
+    const st2 = await window.api.mcpStatus();
+    assert('状态里带插件信息', !!(st2 && st2.plugin && Array.isArray(st2.plugin.profiles)), st2 && st2.plugin);
+    assert('插件包名固定', !!(st2.plugin && st2.plugin.bundle === 'dsh-ai-script-studio-mcp'), st2.plugin && st2.plugin.bundle);
+    assert('插件里没有默认安装', !((st2.plugin.profiles || []).some((p) => p.pluginInstalled)), st2.plugin.profiles);
     SettingsPanel.switchTab('ai');
   });
 
@@ -380,6 +394,76 @@
     R.outlineCurrent = cur ? cur.textContent.trim().slice(0, 24) : null;
     assert('光标所在小节高亮', !!cur, R.outlineCurrent);
     assert('有未写小节（灰色）', document.querySelectorAll('#outlineFloat .of-sec.empty').length >= 1);
+    OutlineFloat.setOpen(false, { silent: true });
+  });
+
+  /* ---------- 13.5 计划大纲：导入 / 落成目录 / 浮窗可改 ---------- */
+  await step('计划大纲导入与浮窗编辑', async () => {
+    assert('AI 面板有按大纲写按钮', !!document.getElementById('btnOutlineWrite'));
+    assert('上下文可选整篇大纲', !!document.querySelector('#contextSelect option[value="outline"]'));
+
+    Project.setOutlineItems([]);
+    const md = '## 第一幕 风起\n- 山道\n- 破庙\n## 第二幕 暗流\n1. 夜宴\n2. 长街';
+    const items = Project.parseOutlineText(md);
+    R.outlineParsed = items.map(function (i) { return i.level + ':' + i.title; });
+    assert('解析出 6 个节点', items.length === 6, items.length);
+    assert('两级都认出来了', items.filter(i => i.level === 1).length === 2 && items.filter(i => i.level === 2).length === 4, R.outlineParsed);
+    assert('列表项归到第二章', items[5].title === '长街' && items[5].level === 2, items[5].title);
+
+    const plain = Project.parseOutlineText('第一章 起风\n第一节 巷口\n第二节 灯\n第二章 落雨');
+    R.outlinePlain = plain.map(i => i.level + ':' + i.title);
+    assert('中文序号也认得', plain.length === 4 && plain[1].level === 2, R.outlinePlain);
+
+    Project.setOutlineItems(Project.parseOutlineText(md));
+    const res = Project.applyOutlineToActs();
+    R.outlineApplied = res;
+    assert('按大纲建了章和节', (res.acts + res.sections) > 0, res);
+    assert('大纲上的章落成了真章', Project.get().acts.some(a => /第一幕 风起/.test(a.title)), Project.get().acts.map(a => a.title));
+    const prog = Project.outlineProgress();
+    R.outlineProgress = prog.map(p => (p.linked ? 'L' : '-') + (p.written ? 'W' : 'E') + ':' + p.item.title);
+    assert('大纲节点都回挂了目录', prog.every(p => p.linked), R.outlineProgress);
+    assert('新建的节点都还没写', prog.filter(p => p.item.level === 2).every(p => !p.written));
+
+    OutlineFloat.setOpen(true, { silent: true });
+    OutlineFloat.refresh({ immediate: true });
+    await wait(240);
+    assert('浮窗有计划大纲区', document.querySelectorAll('#outlineFloat .of-plan').length === 6, document.querySelectorAll('#outlineFloat .of-plan').length);
+    const firstSec = Project.outlineProgress().filter(p => p.item.level === 2)[0];
+    Outline.openSection(firstSec.act.id, firstSec.sec.id);
+    await wait(160);
+    OutlineFloat.refresh({ immediate: true });
+    await wait(120);
+    assert('计划大纲高亮当前小节', !!document.querySelector('#outlineFloat .of-plan.current'), document.querySelectorAll('#outlineFloat .of-plan.current').length);
+    assert('未写的节点是灰的', document.querySelectorAll('#outlineFloat .of-plan.empty').length >= 1);
+    assert('正文目录区也在', document.querySelectorAll('#outlineFloat .of-act').length >= 2);
+
+    const titleEl = document.querySelector('#outlineFloat .of-plan-sec .of-plan-title');
+    titleEl.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    assert('双击进入改名', titleEl.getAttribute('contenteditable') !== null);
+    titleEl.textContent = '改过的节名';
+    titleEl.dispatchEvent(new FocusEvent('blur'));
+    await wait(140);
+    assert('大纲标题改成功', Project.outlineList().some(i => i.title === '改过的节名'), Project.outlineList().map(i => i.title));
+
+    const before = Project.outlineList().length;
+    const row = document.querySelector('#outlineFloat .of-plan-sec');
+    row.querySelector('[data-tool="del"]').click();
+    await wait(120);
+    assert('删掉一个节点', Project.outlineList().length === before - 1, Project.outlineList().length);
+
+    document.getElementById('ofImport').click();
+    await wait(140);
+    const modal = document.getElementById('outlineImportModal');
+    assert('导入弹窗打开', modal.classList.contains('show'));
+    const ta = document.getElementById('oiText');
+    ta.value = '- 巷口\n- 灯\n- 雨';
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    const prev = document.getElementById('oiResult').textContent;
+    R.outlinePreview = prev;
+    assert('导入前有预览', /识别到 3 个节点/.test(prev), prev);
+    document.getElementById('oiCancel').click();
+    await wait(90);
+    assert('取消后弹窗关闭', !modal.classList.contains('show'));
     OutlineFloat.setOpen(false, { silent: true });
   });
 
@@ -529,7 +613,136 @@
     assert('AI 按钮恢复可用', document.getElementById('aiActionBtn').disabled === false);
   });
 
-  /* ---------- 17.5 MCP 外部写入不打断手动编辑 ---------- */
+  /* ---------- 17.2 技能库（临时 DSH_HOME，见 smoke.js） ---------- */
+  await step('技能库', async () => {
+    const list = await window.api.skillsList();
+    R.skills = ((list && list.items) || []).map((i) => i.name);
+    assert('技能列表可读', !!(list && list.ok), list && list.ok);
+    assert('读到临时技能', R.skills.indexOf('smoke-style') >= 0, R.skills);
+    assert('设置页有技能列表容器', !!document.getElementById('skillList'));
+    assert('设置页有 4 个 AI 预设', document.querySelectorAll('#presetRow [data-preset]').length === 4);
+
+    const saved = await window.api.skillsSave({ name: '冒烟技能二', description: '冒烟测试保存用', content: '# 规则\n\n只写短句。' });
+    assert('新建技能', !!(saved && saved.ok && saved.file), (saved && (saved.error || saved.file)) || '');
+    if (saved && saved.file) {
+      const rd = await window.api.skillsRead(saved.file);
+      assert('读回技能正文', ((rd && rd.skill && rd.skill.body) || '').indexOf('只写短句') >= 0);
+      const rm = await window.api.skillsRemove(saved.file);
+      assert('删除技能', !!(rm && rm.ok), (rm && rm.error) || '');
+    }
+
+    const bodies = await window.Skills.bodies(['smoke-style']);
+    assert('技能正文可取', ((bodies[0] && bodies[0].content) || '').indexOf('短句，留白') >= 0);
+    await window.Skills.setSelected(['smoke-style']);
+    R.skillsSelected = window.Skills.selected();
+    assert('技能选择已记住', R.skillsSelected.indexOf('smoke-style') >= 0, R.skillsSelected);
+    assert('面板按钮显示数量', (document.getElementById('btnSkillPick').textContent || '').indexOf('1 个') >= 0,
+      document.getElementById('btnSkillPick').textContent);
+  });
+
+  /* ---------- 17.3 模式切换（直连 / 本地 Agent） ---------- */
+  await step('AI 模式切换', async () => {
+    const sel = document.getElementById('aiModeSelect');
+    assert('模式下拉存在', !!sel);
+    sel.value = 'agent';
+    sel.dispatchEvent(new Event('change'));
+    await wait(150);
+    assert('切到 Agent 模式', (Store.get().api.mode) === 'agent', Store.get().api.mode);
+    R.agentStatusBar = document.getElementById('statusApi').textContent;
+    assert('状态栏显示本地 Agent', String(R.agentStatusBar).indexOf('Agent') >= 0, R.agentStatusBar);
+    sel.value = 'direct';
+    sel.dispatchEvent(new Event('change'));
+    await wait(150);
+    assert('切回直连模式', (Store.get().api.mode) === 'direct', Store.get().api.mode);
+  });
+
+  /* ---------- 17.4 本地 Agent 改写（用假 dsh，离线可测） ---------- */
+  await step('本地 AI Agent 改写', async () => {
+    const cfg = window.__SMOKE_AI || {};
+    await Store.patch({ api: Object.assign({}, Store.get().api, { mode: 'agent', baseUrl: cfg.url }) });
+    const sel = document.getElementById('aiModeSelect');
+    sel.value = 'agent';
+    document.getElementById('promptInput').value = '把这段改得更短';
+    await AIPanel.run();
+    const t0 = Date.now();
+    let st = '';
+    while (Date.now() - t0 < 40000) {
+      st = document.getElementById('aiStatus').textContent || '';
+      if (/已完成|失败|停止|出错/.test(st)) break;
+      await wait(120);
+    }
+    R.agentRunStatus = st;
+    R.agentRunText = (document.getElementById('aiResultText').textContent || '').slice(0, 30);
+    assert('Agent 返回结果', /已完成/.test(st), st);
+    assert('Agent 有正文', (R.agentRunText || '').length > 0, R.agentRunText);
+    await Store.patch({ api: Object.assign({}, Store.get().api, { mode: 'direct' }) });
+    sel.value = 'direct';
+  });
+
+  /* ---------- 17.5 直连模式把技能正文拼进系统提示词 ---------- */
+  await step('直连模式注入技能', async () => {
+    const cfg = window.__SMOKE_AI || {};
+    await Store.patch({ api: Object.assign({}, Store.get().api, { mode: 'direct', baseUrl: cfg.url, apiKey: 'sk-smoke', model: 'deepseek-chat' }) });
+    await window.Skills.setSelected(['smoke-style']);
+    document.getElementById('promptInput').value = '润色一下';
+    await AIPanel.run();
+    const t0 = Date.now();
+    let st = '';
+    while (Date.now() - t0 < 15000) {
+      st = document.getElementById('aiStatus').textContent || '';
+      if (/已完成|失败/.test(st)) break;
+      await wait(100);
+    }
+    assert('直连请求已完成', /已完成/.test(st), st);
+    await window.Skills.setSelected([]);
+  });
+
+  /* ---------- 17.55 按大纲写下一节 ---------- */
+  await step('按大纲写下一节', async () => {
+    const cfg = window.__SMOKE_AI || {};
+    await Store.patch({ api: Object.assign({}, Store.get().api, { mode: 'direct', baseUrl: cfg.url, apiKey: 'sk-smoke', model: 'deepseek-chat' }) });
+    await window.App.newProject({ title: '大纲写作测试', dirty: true });
+    await wait(260);
+    Project.setOutlineItems(Project.parseOutlineText('## 第一章 雨夜\n- 巷口\n- 刀\n## 第二章 天明'));
+    Project.applyOutlineToActs();
+    if (window.App && App.refreshAll) App.refreshAll();
+    await wait(220);
+    const target = Project.outlineProgress().find(p => p.item.level === 2 && !p.written);
+    assert('找到要写的小节', !!target, Project.outlineProgress().map(p => p.item.title));
+
+    // 先清空上一轮的状态文案，否则轮询会立刻命中旧的「已完成」
+    document.getElementById('aiStatus').textContent = '';
+    document.getElementById('aiResultText').textContent = '';
+    document.getElementById('btnOutlineWrite').click();
+    const t0 = Date.now();
+    let st = '';
+    while (Date.now() - t0 < 15000) {
+      st = document.getElementById('aiStatus').textContent || '';
+      if (/已完成|失败/.test(st)) break;
+      await wait(100);
+    }
+    R.outlineWriteStatus = st;
+    R.outlineWriteText = document.getElementById('aiResultText').textContent || '';
+    assert('按大纲生成完成', /已完成/.test(st), st);
+    assert('生成了正文', (R.outlineWriteText || '').length > 0, R.outlineWriteText);
+
+    R.outlineApplyDisabled = document.getElementById('aiApply').disabled;
+    R.outlineDebugPending = window.AIPanel._debug ? window.AIPanel._debug() : null;
+    R.outlineDebugActs = Project.get().acts.map(a => a.id + ':' + a.title);
+    R.outlineDebugLookup = R.outlineDebugPending ? !!Project.getAct(R.outlineDebugPending.actId) : null;
+    R.outlineTargetInfo = { actId: target.act.id, secId: target.sec.id, title: target.item.title, dirTitle: target.act.title };
+    document.getElementById('aiApply').click();
+    await wait(240);
+    R.outlineApplyToasts = Array.from(document.querySelectorAll('#toastWrap .toast')).map(t => t.textContent).slice(-3);
+    R.outlineActsHtml = Project.get().acts.map(a => a.title + '::' + String(a.html || '').replace(/\s+/g, ' ').slice(0, 160));
+    const secText = Project.sectionText(target.act.id, target.sec.id);
+    R.outlineSectionText = secText;
+    assert('正文写进了这一节', secText.indexOf('改写后的') >= 0, secText);
+    const after = Project.outlineProgress().find(p => p.item.id === target.item.id);
+    assert('大纲节点标记为已写', !!(after && after.written), after && after.written);
+  });
+
+  /* ---------- 17.6 MCP 外部写入不打断手动编辑 ---------- */
   await step('MCP 写入与手动编辑共存', async () => {
     await window.App.newProject({ title: 'MCP 并发测试', dirty: true });
     await wait(250);

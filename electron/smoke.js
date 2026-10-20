@@ -514,6 +514,18 @@ async function run(ctx) {
   const { startMockAI } = require('./mock-ai');
   const mockAI = await startMockAI();
 
+  /* 技能库测试用临时 DSH_HOME，别污染真实的 %USERPROFILE%\.dsh\skills */
+  const skillHome = fs.mkdtempSync(path.join(os.tmpdir(), 'aisc-skillshome-'));
+  const sampleSkillDir = path.join(skillHome, 'skills', 'smoke-style');
+  fs.mkdirSync(sampleSkillDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(sampleSkillDir, 'SKILL.md'),
+    '---\nname: smoke-style\ndescription: 冒烟测试用的文风技能\n---\n\n# 写法\n\n短句，留白。\n',
+    'utf8'
+  );
+  const oldDshHome = process.env.DSH_HOME;
+  process.env.DSH_HOME = skillHome;
+
   if (!(await waitReady(win, 20000))) {
     console.log('SMOKE_FAIL 渲染进程未就绪');
     return 1;
@@ -549,7 +561,16 @@ async function run(ctx) {
   const gw = await runGatewayTests(win);
   const diag = await runDiagnosticsTests(ctx);
 
-  const allLog = (report.log || []).concat(mcp.log).concat(dshMcp.log).concat(gw.log).concat(diag.log);
+  // 主进程侧：验证渲染层发出的直连请求确实把技能正文拼进了系统提示词
+  const skillBody = mockAI.allBodies().find((b) =>
+    String(((b && b.messages && b.messages[0]) || {}).content || '').indexOf('短句，留白') >= 0);
+  const skillCheck = {
+    name: '直连请求带上了技能正文',
+    ok: !!skillBody,
+    extra: { systemChars: String(((skillBody && skillBody.messages && skillBody.messages[0]) || {}).content || '').length }
+  };
+
+  const allLog = (report.log || []).concat(mcp.log).concat(dshMcp.log).concat(gw.log).concat(diag.log).concat([skillCheck]);
   const lines = allLog.map((item) =>
     (item.ok ? '  PASS  ' : '  FAIL  ') + item.name + (item.extra ? '  → ' + JSON.stringify(item.extra) : '')
   );
@@ -584,6 +605,8 @@ async function run(ctx) {
   }
 
   try { await mockAI.close(); } catch (e) { /* ignore */ }
+  if (oldDshHome === undefined) delete process.env.DSH_HOME;
+  else process.env.DSH_HOME = oldDshHome;
   return ok ? 0 : 1;
 }
 
