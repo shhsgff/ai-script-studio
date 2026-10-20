@@ -5,9 +5,10 @@ Electron + 原生 Node，界面沿用原型的暗色玻璃拟态风格，功能�
 
 [![构建 Windows 安装包](https://github.com/shhsgff/ai-script-studio/actions/workflows/build-windows.yml/badge.svg)](https://github.com/shhsgff/ai-script-studio/actions/workflows/build-windows.yml)
 
-> 现在版本 **1.1.3**：多文档标签、章 → 节两级目录、故事大纲浮窗、查找替换、Word/PDF/纯文本导出、
+> 现在版本 **1.1.4**：多文档标签、章 → 节两级目录、故事大纲浮窗、查找替换、Word/PDF/纯文本导出、
 > **本地 dsh 网关（不需要买 Key）**、**DSH 关键词一键生成剧本**、**MCP 反向写入**，
-> 并且下次启动会自动回到上次的工作现场。
+> 下次启动自动回到上次的工作现场；1.1.4 专门加固了**子进程与 MCP**：崩溃不再拖垮启动、残留进程自动清理、
+> 诊断日志在 `%APPDATA%\ai-script-studio\logs\app.log`，关于面板里有一键打开按钮。
 
 ---
 
@@ -82,7 +83,7 @@ npm run build      # 产物在 dist/
 ### 让 GitHub 帮你打包（可选）
 
 仓库带了 `.github/workflows/build-windows.yml`：到 **Actions → 构建 Windows 安装包 → Run workflow**，
-或者推一个 `v*` 标签，它会在 Windows runner 上先跑一遍 205 条冒烟自测，通过后打包，
+或者推一个 `v*` 标签，它会在 Windows runner 上先跑一遍 209 条冒烟自测，通过后打包，
 把安装版和免安装版两个 exe 作为 artifact 上传。本地没有 Node 环境也能拿到可执行文件。
 
 ---
@@ -107,6 +108,21 @@ npm run build      # 产物在 dist/
 - **反向**：设置 → DSH / MCP → 开启 MCP 服务 → 选 profile → **一键注册到 DSH**。
   之后在 DSH 里对话，它就能调用 `create_script / add_chapter / append_text / list_scripts / get_script` 直接往本软件里写。
 
+### 4. 出问题先看日志
+
+「设置 → 关于」里记录了两个路径，还有一枚 **打开日志目录** 按钮：
+
+- **诊断日志**：`%APPDATA%\ai-script-studio\logs\app.log`（启动、网关、子进程清理、异常都会写进去，满 1MB 自动轮转成 app.log.1）
+- **子进程登记**：`%APPDATA%\ai-script-studio\children.json`（记录本软件拉起的所有 dsh / MCP 子进程 PID）
+
+1.1.4 起做了三件事，专治「残留 node 进程把下一次启动卡住」：
+
+1. 软件在拉起 `dsh headless` 时把 PID 登记进 `children.json`，正常退出 / 关闭标签会全部结束；
+2. 下次启动会先检查登记的 PID，确认命令行确实属于本软件的子进程才清理（**不会误杀你别的 node 程序**），日志里留下 `[cleanup]` 记录；
+3. `mcp-server.js` 在 stdin 结束、收到 SIGTERM、以及任何未捕获异常时都会主动退出，宿主退出后不会留下孤儿进程。
+
+如果你在任务管理器里看到无人认领的 node 进程，可以在软件里打开日志目录对着 PID 找，或直接结束它 —— 新版不会再出现这种情况。
+
 ---
 
 ## 文档
@@ -114,7 +130,7 @@ npm run build      # 产物在 dist/
 | 文档 | 内容 |
 | --- | --- |
 | [docs/使用教程.md](docs/使用教程.md) | 面向使用者：从安装到每个功能、快捷键总表、数据在哪、常见问题 |
-| [docs/开发与打包.md](docs/开发与打包.md) | 面向开发者：架构、IPC、自测（205 条断言）、打包、踩坑记录 |
+| [docs/开发与打包.md](docs/开发与打包.md) | 面向开发者：架构、IPC、自测（209 条断言）、打包、踩坑记录 |
 
 ---
 
@@ -130,7 +146,7 @@ electron/
   mcp-server.js      stdio MCP server（注册给 DSH 用），运行时复制到用户目录
   mock-ai.js         本地 OpenAI 兼容 SSE 模拟服务（测试用）
   smoke.js           --smoke 驱动器 + 主进程侧 MCP / 网关端到端断言
-  smoke-renderer.js  渲染进程断言（205 条）
+  smoke-renderer.js  渲染进程断言 + 主进程侧诊断断言（209 条）
 src/
   index.html         界面骨架（欢迎页 / 标签栏 / 两级目录 / 编辑区 / AI 面板 / 浮窗 / 弹窗）
   styles.css         暗/亮主题、玻璃拟态、滚动条、打印样式

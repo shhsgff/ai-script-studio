@@ -72,7 +72,7 @@ function buildBlock(opts) {
     '        args:',
     '          - ' + yamlQuote(serverFile),
     '          - ' + yamlQuote(configFile),
-    '        toolCallTimeoutMs: 120000',
+    '        toolCallTimeoutMs: 45000',
     MARK_END
   ];
   return lines.join('\n');

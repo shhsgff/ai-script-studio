@@ -128,6 +128,9 @@ function rpc(payload) {
 }
 
 async function callTool(name, args) {
+  if (!cfg || !cfg.port) {
+    return { content: [{ type: 'text', text: '错误：没有找到桥配置（mcp-bridge.json），请在 AI 剧本创作工具里点「开启 MCP 服务」后重新注册。' }], isError: true };
+  }
   const res = await rpc({ action: name, args: args || {} });
   if (!res || res.ok !== true) {
     const msg = (res && res.error) || '工具执行失败';
@@ -137,12 +140,58 @@ async function callTool(name, args) {
   return { content: [{ type: 'text', text: text }] };
 }
 
+let stdoutBroken = false;
 function send(msg) {
-  process.stdout.write(JSON.stringify(msg) + '\n');
+  if (stdoutBroken) return;
+  try {
+    process.stdout.write(JSON.stringify(msg) + '\n');
+  } catch (e) {
+    stdoutBroken = true;
+    shutdown(0);
+  }
 }
+
+/* ---------- 生命周期兜底 ----------
+ * 这个进程是被外部宿主（DeepSeek Harness）用 stdio 拉起来的。
+ * 宿主一退出，stdin 会被关闭；如果我们不主动退出，就会变成一个
+ * 占着内存、在任务管理器里看起来像「软件的残留进程」，还会让宿主下次启动时各种检查以为端口被占。
+ * 所以：stdin 结束 / 收到信号 / stdout 断开 / 未捕获异常 → 一律立刻退出。
+ */
+let shuttingDown = false;
+function shutdown(code) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  const c = typeof code === 'number' ? code : 0;
+  const done = function () { process.exit(c); };
+  try { process.stdin.pause(); } catch (e) { /* ignore */ }
+  try { process.stdin.destroy(); } catch (e) { /* ignore */ }
+  try {
+    if (process.stdout.writableLength > 0) {
+      process.stdout.once('drain', done);
+    }
+  } catch (e) { /* ignore */ }
+  // 最多等 300ms 把缓冲写干净，然后务必退出（不退就会变成残留进程）
+  setTimeout(done, 300);
+}
+
+process.on('SIGTERM', function () { shutdown(0); });
+process.on('SIGINT', function () { shutdown(0); });
+process.on('SIGHUP', function () { shutdown(0); });
+process.on('disconnect', function () { shutdown(0); });
+process.on('uncaughtException', function (e) {
+  try { process.stderr.write('[mcp-server] uncaught: ' + ((e && e.stack) || e) + '\n'); } catch (e2) { /* ignore */ }
+  shutdown(1);
+});
+process.on('unhandledRejection', function (e) {
+  try { process.stderr.write('[mcp-server] unhandled: ' + ((e && e.stack) || e) + '\n'); } catch (e2) { /* ignore */ }
+  shutdown(1);
+});
 
 let buf = '';
 process.stdin.setEncoding('utf8');
+process.stdin.on('end', function () { shutdown(0); });
+process.stdin.on('close', function () { shutdown(0); });
+process.stdin.on('error', function () { shutdown(0); });
 process.stdin.on('data', function (chunk) {
   buf += chunk;
   let idx;

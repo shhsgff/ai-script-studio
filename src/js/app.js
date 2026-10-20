@@ -1165,7 +1165,9 @@
       }
       if (els.aboutPaths) {
         const i = appInfo || {};
-        els.aboutPaths.textContent = '数据目录：' + (i.userData || '-') + '\n自动存档：' + (i.autosavePath || '-');
+        els.aboutPaths.textContent = '数据目录：' + (i.userData || '-') +
+          '\n自动存档：' + (i.autosavePath || '-') +
+          '\n诊断日志：' + (i.logDir || '-');
         els.aboutPaths.style.whiteSpace = 'pre-wrap';
       }
     }
@@ -1585,6 +1587,14 @@
   }
 
   function bindSettings() {
+  const openLogsBtn = document.getElementById('openLogs');
+  if (openLogsBtn) {
+    openLogsBtn.addEventListener('click', async function () {
+      const err = await api.openLogs();
+      if (err && err !== 'ok') U.toast('打开失败：' + err, 'error');
+    });
+  }
+
     if (!els.settingsModal) return;
     els.settingsModal.addEventListener('click', function (e) {
       if (e.target === els.settingsModal) SettingsPanel.close();

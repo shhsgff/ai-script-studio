@@ -97,5 +97,6 @@ contextBridge.exposeInMainWorld('api', {
   readText: () => ipcRenderer.invoke('clipboard:read'),
   showItemInFolder: (p) => ipcRenderer.invoke('shell:showItem', p),
   openPath: (p) => ipcRenderer.invoke('shell:openPath', p),
+  openLogs: () => ipcRenderer.invoke('app:openLogs'),
   openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url)
 });

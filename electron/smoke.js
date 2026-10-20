@@ -455,6 +455,32 @@ async function runGatewayTests(win) {
   return { log: log, data: data };
 }
 
+/* 主进程侧诊断断言：日志文件、子进程登记、孤儿进程清理 */
+async function runDiagnosticsTests(ctx) {
+  const log = [];
+  const add = (name, ok, extra) => log.push({ name: name, ok: !!ok, extra: extra });
+  let ud = '';
+  try { ud = ctx.app.getPath('userData'); } catch (e) { /* ignore */ }
+  const logFile = path.join(ud, 'logs', 'app.log');
+  let txt = '';
+  try { txt = fs.readFileSync(logFile, 'utf8'); } catch (e) { /* ignore */ }
+
+  add('主进程写了诊断日志', txt.indexOf('[boot]') >= 0, { bytes: txt.length });
+  add('日志里有启动与退出关键节点', /\[boot\]/.test(txt) && /\[gateway\]|\[cleanup\]/.test(txt));
+
+  await sleep(700);
+  add('子进程登记文件已清理（没有残留）', !fs.existsSync(path.join(ud, 'children.json')));
+
+  let liveCount = -1;
+  try {
+    const dshMod = require('./dsh');
+    liveCount = dshMod.livePids().length;
+  } catch (e) { /* ignore */ }
+  add('没有遗留的 dsh 子进程', liveCount === 0, { live: liveCount });
+
+  return { log: log, data: { logFile: logFile, logBytes: txt.length, liveChildren: liveCount } };
+}
+
 async function run(ctx) {
   const win = ctx.win;
   const dialog = ctx.dialog;
@@ -521,8 +547,9 @@ async function run(ctx) {
   const mcp = await runMcpTests(win);
   const dshMcp = await runDshMcpTests(ctx);
   const gw = await runGatewayTests(win);
+  const diag = await runDiagnosticsTests(ctx);
 
-  const allLog = (report.log || []).concat(mcp.log).concat(dshMcp.log).concat(gw.log);
+  const allLog = (report.log || []).concat(mcp.log).concat(dshMcp.log).concat(gw.log).concat(diag.log);
   const lines = allLog.map((item) =>
     (item.ok ? '  PASS  ' : '  FAIL  ') + item.name + (item.extra ? '  → ' + JSON.stringify(item.extra) : '')
   );
@@ -531,7 +558,7 @@ async function run(ctx) {
   console.log(lines.join('\n'));
   console.log('SMOKE_LOG_END');
 
-  const data = Object.assign({}, report.data, { mcp: mcp.data, dshMcp: dshMcp.data, gateway: gw.data });
+  const data = Object.assign({}, report.data, { mcp: mcp.data, dshMcp: dshMcp.data, gateway: gw.data, diag: diag.data });
   console.log('SMOKE_DATA ' + JSON.stringify(data));
 
   const checks = snapshot(dir, savedPath);

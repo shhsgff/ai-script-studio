@@ -10,6 +10,46 @@ const crypto = require('node:crypto');
 const IS_WIN = process.platform === 'win32';
 let running = null; /* { id, child } */
 
+/* 所有还活着的 dsh 子进程：退出时统一清理，避免留下孤儿 node 占住 DSH 的端口 */
+const live = new Set();
+let childWatcher = null;
+
+function livePids() {
+  const out = [];
+  live.forEach(function (c) { if (c && c.pid) out.push(c.pid); });
+  return out;
+}
+
+function notifyChildren() {
+  if (typeof childWatcher !== 'function') return;
+  try { childWatcher(livePids()); } catch (e) { /* ignore */ }
+}
+
+function trackChild(child) {
+  if (!child || !child.pid) return;
+  live.add(child);
+  notifyChildren();
+  const done = function () {
+    if (!live.has(child)) return;
+    live.delete(child);
+    notifyChildren();
+  };
+  child.on('close', done);
+  child.on('exit', done);
+  child.on('error', done);
+}
+
+function setChildWatcher(fn) {
+  childWatcher = typeof fn === 'function' ? fn : null;
+  notifyChildren();
+}
+
+function killAllLive() {
+  const kids = Array.from(live);
+  kids.forEach(function (c) { try { killTree(c); } catch (e) { /* ignore */ } });
+  return kids.length;
+}
+
 function killTree(child) {
   if (!child || child.killed) return;
   try {
@@ -33,6 +73,7 @@ function spawnDsh(command, opts) {
     windowsHide: true,
     stdio: ['pipe', 'pipe', 'pipe']
   });
+  trackChild(child);
   return child;
 }
 
@@ -48,6 +89,7 @@ function detect(command) {
     let child;
     try {
       child = spawn(cmd, ['--version'], { shell: true, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+      trackChild(child);
     } catch (e) {
       finish(false, { message: '启动失败：' + e.message });
       return;
@@ -252,4 +294,4 @@ function makeBridge(opts) {
   };
 }
 
-module.exports = { detect, run, abortCurrent, makeBridge, killTree };
+module.exports = { detect, run, abortCurrent, makeBridge, killTree, livePids, killAllLive, setChildWatcher };

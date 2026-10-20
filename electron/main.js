@@ -42,6 +42,9 @@ const WALLPAPER_DIR = path.join(USER_DIR, 'wallpapers');
 const AUTOSAVE_FILE = path.join(USER_DIR, 'autosave.json');
 const SESSION_FILE = path.join(USER_DIR, 'session.json');
 const BACKUP_DIR = path.join(USER_DIR, 'backups');
+const LOG_DIR = path.join(USER_DIR, 'logs');
+const LOG_FILE = path.join(LOG_DIR, 'app.log');
+const CHILDREN_FILE = path.join(USER_DIR, 'children.json');
 
 // 清理上次异常退出残留的临时写入文件（JSON 原子写入的中间态）
 try {
@@ -55,6 +58,52 @@ try {
 let mainWindow = null;
 let settings = null;
 let settingsSaveTimer = null;
+
+/* ---------- 诊断日志 ----------
+ * 出问题时用户只需要把 %APPDATA%\ai-script-studio\logs\app.log 发过来，就能看到
+ * 窗口有没有建起来、网关/MCP 有没有启起来、子进程有没有残留。
+ */
+function logLine(tag, msg) {
+  try {
+    fs.mkdirSync(LOG_DIR, { recursive: true });
+    try {
+      const st = fs.statSync(LOG_FILE);
+      if (st.size > 1024 * 1024) fs.renameSync(LOG_FILE, LOG_FILE + '.1');
+    } catch (e) { /* 文件还不存在 */ }
+    const line = '[' + new Date().toISOString() + '] [' + tag + '] ' + String(msg) + '\n';
+    fs.appendFileSync(LOG_FILE, line, 'utf8');
+  } catch (e) { /* 日志失败不能影响主流程 */ }
+}
+
+process.on('uncaughtException', (err) => {
+  logLine('uncaught', (err && err.stack) || String(err));
+  console.error('uncaughtException', err);
+});
+process.on('unhandledRejection', (reason) => {
+  logLine('rejection', (reason && reason.stack) || String(reason));
+  console.error('unhandledRejection', reason);
+});
+
+/* ---------- 子进程登记 ----------
+ * 每次拉起 dsh 都把 pid 写到 children.json，正常退出时删掉。
+ * 下次启动先检查这些 pid：如果还活着就杀掉，避免上次崩溃/被强杀留下的 node
+ * 进程继续占着 DSH 的端口（表现就是「DeepSeek Harness 起不来」）。
+ */
+let childrenSaveTimer = null;
+function persistChildren(pids) {
+  clearTimeout(childrenSaveTimer);
+  childrenSaveTimer = setTimeout(() => {
+    try {
+      const list = Array.isArray(pids) ? pids : [];
+      if (!list.length) {
+        try { fs.unlinkSync(CHILDREN_FILE); } catch (e) { /* 不存在就算了 */ }
+        return;
+      }
+      writeJSONAtomic(CHILDREN_FILE, { at: Date.now(), pids: list });
+    } catch (e) { /* ignore */ }
+  }, 400);
+}
+if (typeof dsh.setChildWatcher === 'function') dsh.setChildWatcher(persistChildren);
 
 const DEFAULT_SETTINGS = {
   version: 1,
@@ -371,8 +420,20 @@ ipcMain.handle('app:info', () => ({
   node: process.versions.node,
   platform: process.platform,
   userData: USER_DIR,
-  autosavePath: AUTOSAVE_FILE
+  autosavePath: AUTOSAVE_FILE,
+  logDir: LOG_DIR,
+  logFile: LOG_FILE
 }));
+
+ipcMain.handle('app:openLogs', async () => {
+  try {
+    fs.mkdirSync(LOG_DIR, { recursive: true });
+    const err = await shell.openPath(LOG_DIR);
+    return err || 'ok';
+  } catch (e) {
+    return (e && e.message) || '打开日志目录失败';
+  }
+});
 
 let rendererDirty = false;
 let forceClose = false;
@@ -1326,6 +1387,96 @@ ipcMain.handle('gateway:test', async () => {
   }
 });
 
+// ---------- 清理上次残留的子进程 ----------
+function readChildrenFile() {
+  try {
+    const txt = fs.readFileSync(CHILDREN_FILE, 'utf8').replace(/^\uFEFF/, '');
+    const data = JSON.parse(txt);
+    const pids = Array.isArray(data && data.pids) ? data.pids.filter((n) => Number.isInteger(n) && n > 4) : [];
+    return pids;
+  } catch (e) {
+    return [];
+  }
+}
+
+function runPowerShell(script, timeoutMs) {
+  return new Promise((resolve) => {
+    const { spawn } = require('node:child_process');
+    let out = '';
+    let done = false;
+    const finish = (v) => { if (done) return; done = true; resolve(v); };
+    let child;
+    try {
+      child = spawn('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script], {
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'ignore']
+      });
+    } catch (e) {
+      finish('');
+      return;
+    }
+    const timer = setTimeout(() => { try { child.kill(); } catch (e) { /* ignore */ } finish(out); }, timeoutMs || 8000);
+    child.stdout.on('data', (d) => { out += String(d); if (out.length > 200000) out = out.slice(0, 200000); });
+    child.on('error', () => { clearTimeout(timer); finish(''); });
+    child.on('close', () => { clearTimeout(timer); finish(out); });
+  });
+}
+
+/**
+ * 上次运行留下的 dsh 子进程如果还活着，会占住 DeepSeek Harness 的端口/会话，
+ * 表现就是「DSH 打不开、要手动去任务管理器杀掉一个 node」。
+ * 这里在启动时把它们清掉，并把结果写进日志。
+ */
+async function cleanupStaleChildren() {
+  const pids = readChildrenFile();
+  if (!pids.length) return { found: 0, killed: [] };
+  logLine('cleanup', '发现上次残留的子进程记录：' + pids.join(', '));
+
+  const ids = pids.join(',');
+  const script = [
+    '$ids = @(' + ids + ')',
+    '$rows = @()',
+    'foreach ($i in $ids) {',
+    '  $p = Get-CimInstance Win32_Process -Filter ("ProcessId=" + $i) -ErrorAction SilentlyContinue',
+    '  if ($p) { $rows += [pscustomobject]@{ pid = [int]$p.ProcessId; name = [string]$p.Name; cl = [string]$p.CommandLine } }',
+    '}',
+    'if ($rows.Count -eq 0) { "[]" } else { $rows | ConvertTo-Json -Compress }'
+  ].join('\n');
+
+  const raw = (await runPowerShell(script, 8000)).trim();
+  let rows = [];
+  try {
+    const parsed = JSON.parse(raw || '[]');
+    rows = Array.isArray(parsed) ? parsed : [parsed];
+  } catch (e) {
+    rows = [];
+  }
+
+  const killed = [];
+  const looksLikeOurs = (row) => {
+    const txt = String((row && row.cl) || '').toLowerCase();
+    const name = String((row && row.name) || '').toLowerCase();
+    if (!txt && !name) return false;
+    if (name === 'node.exe' || name === 'cmd.exe') {
+      return /headless|--json|mcp-server|ai-script|dsh/.test(txt);
+    }
+    return false;
+  };
+
+  for (const row of rows) {
+    if (!looksLikeOurs(row)) continue;
+    try {
+      const { spawnSync } = require('node:child_process');
+      spawnSync('taskkill', ['/PID', String(row.pid), '/T', '/F'], { windowsHide: true, timeout: 5000 });
+      killed.push(row.pid);
+    } catch (e) { /* ignore */ }
+  }
+  try { fs.unlinkSync(CHILDREN_FILE); } catch (e) { /* ignore */ }
+  if (killed.length) logLine('cleanup', '已清理残留进程：' + killed.join(', '));
+  else logLine('cleanup', '残留记录里的进程都已退出');
+  return { found: rows.length, killed: killed };
+}
+
 // ---------- 生命周期 ----------
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
@@ -1339,20 +1490,38 @@ if (!gotLock) {
   });
 
   app.whenReady().then(async () => {
+    logLine('boot', '启动 v' + app.getVersion() + ' · ' + process.platform + ' · userData=' + USER_DIR);
     settings = loadSettings();
     ensureDir(WALLPAPER_DIR);
     ensureDir(BACKUP_DIR);
     Menu.setApplicationMenu(null);
     registerMediaProtocol();
 
+    // 先清掉上次残留的 dsh 子进程（最多等 1.5 秒，绝不影响开窗）
+    try {
+      const cleaned = await Promise.race([
+        cleanupStaleChildren(),
+        new Promise((r) => setTimeout(() => r(null), 1500))
+      ]);
+      if (cleaned && cleaned.killed && cleaned.killed.length) {
+        console.log('已清理上次残留的子进程：' + cleaned.killed.join(', '));
+      }
+    } catch (e) {
+      logLine('cleanup', '清理残留进程失败：' + ((e && e.message) || e));
+    }
+
     // 本地 AI 网关：先启动再开窗，这样首屏读到设置时已经填好本地密钥
     try {
       await startLocalGateway();
+      const gwNow = gatewayStatus();
+      logLine('gateway', '网关就绪 · port=' + gwNow.port + ' model=' + gwNow.model + ' enabled=' + gwNow.enabled);
     } catch (e) {
+      logLine('gateway', '启动失败：' + ((e && e.message) || e));
       console.error('启动本地网关失败：', e && e.message);
     }
 
     createWindow();
+    logLine('boot', '窗口已创建');
 
     // 上次退出前开着 MCP 服务的话自动恢复
     if (mcpMeta && mcpMeta.enabled) {
@@ -1369,6 +1538,18 @@ if (!gotLock) {
   });
 
   app.on('before-quit', () => {
+    logLine('quit', '开始退出');
+    clearTimeout(childrenSaveTimer);
+    // 关键：把我们拉起的 dsh 子进程全部结束，否则它们会变成孤儿 node，
+    // 占着 DSH 的端口/会话，导致下一次 DeepSeek Harness 起不来。
+    try {
+      if (dshJob) dshJob.abort();
+    } catch (e) { /* ignore */ }
+    try {
+      const n = dsh.killAllLive();
+      if (n) logLine('quit', '结束 ' + n + ' 个 dsh 子进程');
+    } catch (e) { /* ignore */ }
+    try { fs.unlinkSync(CHILDREN_FILE); } catch (e) { /* ignore */ }
     persistSettings();
     try { if (mcpBridge) mcpBridge.stop(); } catch (e) { /* ignore */ }
     try { localGateway.stop(); } catch (e) { /* ignore */ }
