@@ -956,3 +956,63 @@ code {
   .outline-float { max-height: 72vh; }
   .dsh-log { height: 96px; }
 }
+
+/* ---------- 生成中：AI 面板锁定（正文仍可手动编辑） ---------- */
+#sidebarRight { position: relative; }
+
+.ai-busy-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 45;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  cursor: not-allowed;
+  background: color-mix(in srgb, var(--bg-sidebar) 76%, transparent);
+  backdrop-filter: blur(3px);
+}
+
+.ai-busy-overlay.show { display: flex; }
+
+.ai-busy-card {
+  max-width: 260px;
+  text-align: center;
+  padding: 22px 18px;
+  border-radius: 14px;
+  border: 1px solid var(--border-strong);
+  background: color-mix(in srgb, var(--bg-menu) 92%, transparent);
+  box-shadow: var(--shadow-lg);
+}
+
+.ai-busy-icon {
+  font-size: 26px;
+  line-height: 1;
+  margin-bottom: 10px;
+  animation: busyPulse 1.6s ease-in-out infinite;
+}
+
+@keyframes busyPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: .55; transform: scale(.92); }
+}
+
+.ai-busy-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-strong);
+  margin-bottom: 6px;
+}
+
+.ai-busy-text {
+  font-size: 12.5px;
+  color: var(--accent);
+  margin-bottom: 8px;
+  word-break: break-word;
+}
+
+.ai-busy-hint {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+

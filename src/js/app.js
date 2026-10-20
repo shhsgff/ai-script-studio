@@ -1174,6 +1174,20 @@
   };
 
   /* ---------------- 工作区：标签 / 欢迎页 / 浮窗 / DSH 按钮 ---------------- */
+  // 生成中的全局提示：状态栏右侧常驻一行，结束后自动清掉
+  function bindBusyIndicator() {
+    if (!window.Busy) return;
+    window.Busy.onChange(function (list) {
+      const node = els.statusMessage;
+      if (!node) return;
+      if (!list.length) {
+        if (String(node.textContent || '').indexOf('⏳') === 0) U.status('');
+        return;
+      }
+      U.status('⏳ ' + list[0].label + '…（正文可继续手动编辑）', true);
+    });
+  }
+
   function bindWorkspace() {
     if (els.btnNewTab) els.btnNewTab.addEventListener('click', function () { newProject(); });
     if (els.btnDsh) els.btnDsh.addEventListener('click', function () { if (window.DshGen) DshGen.open(); });
@@ -1461,6 +1475,26 @@
     return String(text || '').split(/\n+/).map(function (s) { return s.trim(); }).filter(Boolean);
   }
 
+  /* 外部写入（MCP / DSH 反向写入）前后保住用户的光标与滚动位置：
+     先把正在敲的内容同步进模型，写完重新加载章节再把光标放回去，
+     这样"AI 边写、人边改"不会互相打断。 */
+  function beforeExternalWrite() {
+    const state = { caret: null };
+    try {
+      if (window.Editor) {
+        Editor.flushSnapshot();
+        state.caret = Editor.saveCaret();
+      }
+    } catch (e) { /* ignore */ }
+    return state;
+  }
+
+  function afterExternalWrite(state) {
+    try {
+      if (state && state.caret && window.Editor) Editor.restoreCaret(state.caret);
+    } catch (e) { /* ignore */ }
+  }
+
   function mcpHandle(action, args) {
     const a = args || {};
     switch (action) {
@@ -1533,9 +1567,11 @@
           model.activeActId = act.id;
           Workspace.create(model, null, { dirty: true, activate: true });
         } else {
+          const keep = beforeExternalWrite();
           p.acts.push(act);
           Project.markDirty();
           refreshAll('');
+          afterExternalWrite(keep);
         }
         return { title: title, paragraphs: paras.length };
       }
@@ -1561,10 +1597,14 @@
           div.textContent = t;
           return '<p>' + U.escapeHtml(t) + '</p>';
         }).join('') || '<p><br></p>';
+        const keep = beforeExternalWrite();
         act.html = (act.html || '') + html;
         Project.markDirty();
         refreshAll('');
-        return { chapter: act.title, added: mcpParagraphs(text).length };
+        afterExternalWrite(keep);
+        const added = mcpParagraphs(text).length;
+        U.toast('DSH 写入了 ' + added + ' 段到「' + act.title + '」', 'success', 2400);
+        return { chapter: act.title, added: added };
       }
       default:
         throw new Error('未知操作：' + action);
@@ -2117,6 +2157,7 @@
     bindShortcuts();
     bindSettings();
     bindWorkspace();
+    bindBusyIndicator();
     bindMcpRequests();
 
     Editor.init();

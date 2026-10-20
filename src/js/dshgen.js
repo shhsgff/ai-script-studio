@@ -189,6 +189,11 @@
 
   function setRunning(on) {
     running = !!on;
+    /* 登记全局忙状态：期间 AI 改写等会调用模型的功能要拦住，正文手动编辑不受影响 */
+    if (window.Busy) {
+      if (on) window.Busy.begin('dsh', 'DSH 正在生成剧本');
+      else window.Busy.end('dsh');
+    }
     const e = q();
     if (e.run) { e.run.disabled = !!on; e.run.textContent = on ? '生成中…' : '开始生成'; }
     if (e.stop) e.stop.hidden = !on;

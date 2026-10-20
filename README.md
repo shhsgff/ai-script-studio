@@ -5,10 +5,11 @@ Electron + 原生 Node，界面沿用原型的暗色玻璃拟态风格，功能�
 
 [![构建 Windows 安装包](https://github.com/shhsgff/ai-script-studio/actions/workflows/build-windows.yml/badge.svg)](https://github.com/shhsgff/ai-script-studio/actions/workflows/build-windows.yml)
 
-> 现在版本 **1.1.4**：多文档标签、章 → 节两级目录、故事大纲浮窗、查找替换、Word/PDF/纯文本导出、
+> 现在版本 **1.1.5**：多文档标签、章 → 节两级目录、故事大纲浮窗、查找替换、Word/PDF/纯文本导出、
 > **本地 dsh 网关（不需要买 Key）**、**DSH 关键词一键生成剧本**、**MCP 反向写入**，
-> 下次启动自动回到上次的工作现场；1.1.4 专门加固了**子进程与 MCP**：崩溃不再拖垮启动、残留进程自动清理、
-> 诊断日志在 `%APPDATA%\ai-script-studio\logs\app.log`，关于面板里有一键打开按钮。
+> 下次启动自动回到上次的工作现场；1.1.4 加固了**子进程与 MCP**（崩溃不拖垮启动、残留进程自动清理、
+> 诊断日志在 `%APPDATA%\ai-script-studio\logs\app.log`）；1.1.5 让"机器写"和"人写"能同时进行：
+> **DSH 生成期间 AI 改写面板会被锁住并提示**，但正文照常可以手动编辑；**MCP 追加内容时会保住你的光标**。
 
 ---
 
@@ -83,7 +84,7 @@ npm run build      # 产物在 dist/
 ### 让 GitHub 帮你打包（可选）
 
 仓库带了 `.github/workflows/build-windows.yml`：到 **Actions → 构建 Windows 安装包 → Run workflow**，
-或者推一个 `v*` 标签，它会在 Windows runner 上先跑一遍 209 条冒烟自测，通过后打包，
+或者推一个 `v*` 标签，它会在 Windows runner 上先跑一遍 222 条冒烟自测，通过后打包，
 把安装版和免安装版两个 exe 作为 artifact 上传。本地没有 Node 环境也能拿到可执行文件。
 
 ---
@@ -130,7 +131,7 @@ npm run build      # 产物在 dist/
 | 文档 | 内容 |
 | --- | --- |
 | [docs/使用教程.md](docs/使用教程.md) | 面向使用者：从安装到每个功能、快捷键总表、数据在哪、常见问题 |
-| [docs/开发与打包.md](docs/开发与打包.md) | 面向开发者：架构、IPC、自测（209 条断言）、打包、踩坑记录 |
+| [docs/开发与打包.md](docs/开发与打包.md) | 面向开发者：架构、IPC、自测（222 条断言）、打包、踩坑记录 |
 
 ---
 
@@ -146,7 +147,7 @@ electron/
   mcp-server.js      stdio MCP server（注册给 DSH 用），运行时复制到用户目录
   mock-ai.js         本地 OpenAI 兼容 SSE 模拟服务（测试用）
   smoke.js           --smoke 驱动器 + 主进程侧 MCP / 网关端到端断言
-  smoke-renderer.js  渲染进程断言 + 主进程侧诊断断言（209 条）
+  smoke-renderer.js  渲染进程断言 + 主进程侧诊断断言（222 条）
 src/
   index.html         界面骨架（欢迎页 / 标签栏 / 两级目录 / 编辑区 / AI 面板 / 浮窗 / 弹窗）
   styles.css         暗/亮主题、玻璃拟态、滚动条、打印样式

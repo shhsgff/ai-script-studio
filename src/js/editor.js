@@ -529,12 +529,34 @@
     });
   }
 
+  /* 保存 / 恢复光标：给"外部写入（MCP、AI 采纳）后重绘"用，避免打断正在敲字的人 */
+  function saveCaret() {
+    if (!currentActId) return null;
+    const scroller = els.scroll;
+    return {
+      actId: currentActId,
+      offset: getCaretOffset(els.body),
+      scrollTop: scroller ? scroller.scrollTop : 0,
+      hadFocus: document.activeElement === els.body || document.activeElement === els.title
+    };
+  }
+
+  function restoreCaret(state) {
+    if (!state || !state.actId || state.actId !== currentActId) return false;
+    if (typeof state.offset === 'number') {
+      try { setCaretOffset(els.body, state.offset); } catch (e) { /* ignore */ }
+    }
+    if (els.scroll && typeof state.scrollTop === 'number') els.scroll.scrollTop = state.scrollTop;
+    return true;
+  }
+
   window.Editor = {
     init, loadAct, focusBody, flushSnapshot,
     undo, redo, canUndo, canRedo,
     getSelectionText, replaceSelection, insertText,
     onEdited, syncToModel,
     scrollToSection, caretSection, headingsOf, reportCaret,
+    saveCaret, restoreCaret,
     getCurrentActId: () => currentActId
   };
 })();

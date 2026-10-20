@@ -9,6 +9,7 @@
   let streaming = false;
   let refImage = null;       // { dataUrl, name }
   let fileInput = null;
+  let busyOverlay = null;    // 「DSH 正在生成，AI 暂不可用」遮罩
 
   const MAX_TARGET = 12000;
   const MAX_REF = 8000;
@@ -74,7 +75,7 @@
     if (els.resultText) els.resultText.classList.toggle('streaming', on);
     if (els.stop) els.stop.hidden = !on;
     if (els.action) {
-      els.action.disabled = on;
+      els.action.disabled = on || !!busyBlocker();
       els.action.textContent = on ? '⏳ 生成中…' : '🚀 立即调用 AI 改写';
     }
     if (!on) {
@@ -83,6 +84,7 @@
     }
     // 生成结束后必须重新计算「采纳」可用状态（否则会一直停用）
     if (els.apply) els.apply.disabled = on || !String(resultText || '').trim();
+    if (!on) refreshBusyUI();
   }
 
   function renderText() {
@@ -134,7 +136,50 @@
     return '';
   }
 
+  /* ---------- 忙状态：DSH 生成期间锁住 AI 改写 ---------- */
+  function busyBlocker() {
+    return window.Busy ? window.Busy.blocker('ai') : null;
+  }
+
+  function ensureBusyUI() {
+    if (!els.panel || busyOverlay) return;
+    busyOverlay = document.createElement('div');
+    busyOverlay.className = 'ai-busy-overlay';
+    busyOverlay.innerHTML =
+      '<div class="ai-busy-card">' +
+        '<div class="ai-busy-icon">⏳</div>' +
+        '<div class="ai-busy-title">正在工作，暂时无法使用</div>' +
+        '<div class="ai-busy-text"></div>' +
+        '<div class="ai-busy-hint">正文仍然可以正常手动编辑</div>' +
+      '</div>';
+    els.panel.appendChild(busyOverlay);
+    busyOverlay.addEventListener('click', function () {
+      const b = busyBlocker();
+      if (b) U.toast(b.label + '，AI 改写暂时不可用（正文仍可手动编辑）', 'warn', 3200);
+    });
+  }
+
+  function refreshBusyUI() {
+    const b = busyBlocker();
+    if (busyOverlay) {
+      busyOverlay.classList.toggle('show', !!b);
+      const text = busyOverlay.querySelector('.ai-busy-text');
+      if (text) text.textContent = b ? (b.label + '…') : '';
+    }
+    if (els.action) {
+      els.action.disabled = !!b || streaming;
+      if (b) els.action.textContent = '⏳ ' + b.label;
+      else els.action.textContent = streaming ? '⏳ 生成中…' : '🚀 立即调用 AI 改写';
+    }
+  }
+
+  function warnBusy(b) {
+    U.toast((b.label || '正在工作中') + '，AI 改写暂时不可用；正文仍可以手动编辑。', 'warn', 3400);
+  }
+
   function prepare() {
+    const blocker = busyBlocker();
+    if (blocker) { warnBusy(blocker); return null; }
     const api = Store.get().api || {};
     if (!api.apiKey || !String(api.apiKey).trim()) {
       U.confirmBox({
@@ -518,6 +563,9 @@
   /* ---------- 初始化 ---------- */
   function init() {
     q();
+    ensureBusyUI();
+    if (window.Busy) window.Busy.onChange(refreshBusyUI);
+    refreshBusyUI();
     window.api.onAiEvent(handleEvent);
 
     if (els.action) els.action.addEventListener('click', run);

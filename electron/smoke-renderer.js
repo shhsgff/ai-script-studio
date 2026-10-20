@@ -484,7 +484,27 @@
     document.getElementById('dshPrompt').value = '一个失忆的刀客在雨夜的长安城里寻找自己的名字';
     document.getElementById('dshActs').value = '2';
     document.getElementById('dshWords').value = '600';
-    await DshGen.run();
+    const running = DshGen.run();
+    await wait(120);
+
+    // 生成期间：AI 面板必须被锁住（遮罩 + 按钮禁用），但正文仍可编辑
+    const busySnap = window.Busy ? window.Busy.snapshot() : [];
+    assert('生成时登记了忙状态', busySnap.some((x) => x.key === 'dsh'), busySnap);
+    assert('AI 面板出现锁定遮罩', !!document.querySelector('.ai-busy-overlay.show'));
+    assert('AI 按钮被禁用', document.getElementById('aiActionBtn').disabled === true);
+    assert('正文仍可编辑', document.getElementById('actBody').getAttribute('contenteditable') === 'true');
+    const bodyEl = document.getElementById('actBody');
+    bodyEl.focus();
+    const rng = document.createRange();
+    rng.selectNodeContents(bodyEl);
+    rng.collapse(false);
+    const selNow = window.getSelection();
+    selNow.removeAllRanges();
+    selNow.addRange(rng);
+    document.execCommand('insertText', false, '生成时手动补一句。');
+    assert('生成时可手动写入正文', (bodyEl.textContent || '').indexOf('生成时手动补一句。') >= 0);
+
+    await running;
 
     const t0 = Date.now();
     let created = false;
@@ -504,6 +524,35 @@
     assert('正文写入', (p.acts[0].html || '').indexOf('雨下了一整夜') >= 0);
     await wait(500);
     assert('弹窗自动关闭', !document.getElementById('dshModal').classList.contains('show'));
+    assert('忙状态已解除', !window.Busy || !window.Busy.is('dsh'), window.Busy && window.Busy.snapshot());
+    assert('AI 面板解锁', !document.querySelector('.ai-busy-overlay.show'));
+    assert('AI 按钮恢复可用', document.getElementById('aiActionBtn').disabled === false);
+  });
+
+  /* ---------- 17.5 MCP 外部写入不打断手动编辑 ---------- */
+  await step('MCP 写入与手动编辑共存', async () => {
+    await window.App.newProject({ title: 'MCP 并发测试', dirty: true });
+    await wait(250);
+    const bodyEl = document.getElementById('actBody');
+    bodyEl.focus();
+    const rng = document.createRange();
+    rng.selectNodeContents(bodyEl);
+    rng.collapse(false);
+    const selNow = window.getSelection();
+    selNow.removeAllRanges();
+    selNow.addRange(rng);
+    document.execCommand('insertText', false, '我手动写的第一句。');
+    await wait(120);
+
+    const caretBefore = window.Editor.saveCaret();
+    const res = await window.App.mcpHandle('append_text', { text: '这是 DSH 通过 MCP 追加的一段。' });
+    await wait(200);
+
+    const html = Project.getAct().html || '';
+    assert('MCP 追加成功', html.indexOf('DSH 通过 MCP 追加') >= 0, res);
+    assert('手动内容没被冲掉', html.indexOf('我手动写的第一句。') >= 0);
+    assert('光标位置被保住', !!caretBefore && !!window.Editor.saveCaret(), caretBefore);
+    assert('编辑器仍是可编辑状态', bodyEl.getAttribute('contenteditable') === 'true');
   });
 
   /* ---------- 18. 窗口关闭 / 草稿标记 ---------- */

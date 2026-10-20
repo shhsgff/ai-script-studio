@@ -173,4 +173,39 @@
     countWords, countChars, formatNumber, formatTime, formatDate, clamp,
     toast, confirmBox, status, isVisible, textOfNode
   };
+
+  /* ---------- 全局忙状态 ----------
+     同一时间只允许一个"系统级长任务"（比如 DSH 生成剧本）。
+     期间正文仍可手动编辑，但 AI 改写等其他会调用模型的功能要拦住。 */
+  const busyTasks = new Map();
+  const busyListeners = [];
+
+  function busySync() {
+    const on = busyTasks.size > 0;
+    document.body.classList.toggle('app-busy', on);
+    document.body.dataset.busyLabel = on ? (busyTasks.values().next().value || '') : '';
+    busyListeners.forEach((cb) => { try { cb(Busy.snapshot()); } catch (e) { /* ignore */ } });
+  }
+
+  window.Busy = {
+    begin(key, label) {
+      if (!key) return;
+      busyTasks.set(key, String(label || key));
+      busySync();
+    },
+    end(key) {
+      if (busyTasks.delete(key)) busySync();
+    },
+    is(key) { return key ? busyTasks.has(key) : busyTasks.size > 0; },
+    /* 除 key 之外还有别的任务在跑时，返回那个任务；否则 null */
+    blocker(key) {
+      for (const pair of busyTasks) {
+        if (pair[0] !== key) return { key: pair[0], label: pair[1] };
+      }
+      return null;
+    },
+    label() { return busyTasks.size ? (busyTasks.values().next().value || '') : ''; },
+    snapshot() { return Array.from(busyTasks, function (pair) { return { key: pair[0], label: pair[1] }; }); },
+    onChange(cb) { if (typeof cb === 'function') busyListeners.push(cb); }
+  };
 })();
