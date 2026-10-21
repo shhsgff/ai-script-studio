@@ -172,7 +172,7 @@
   function syncDirtyUI() {
     const p = Project.get();
     if (!p) {
-      if (els.topTitle) els.topTitle.textContent = 'AI 智能剧本创作工具';
+      if (els.topTitle) els.topTitle.textContent = '践行';
       if (els.topSaveHint) { els.topSaveHint.textContent = ''; els.topSaveHint.classList.remove('dirty', 'saved'); }
       if (els.statusSave) {
         els.statusSave.textContent = '○ 没有打开的剧本';

@@ -29,7 +29,7 @@ jobs:
       - name: 生成应用图标
         run: node scripts/make-icon.js
 
-      - name: 打包 macOS（dmg + zip，x64 + arm64）
+      - name: 打包 macOS（universal dmg，Intel + Apple Silicon 通用）
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: npm run build:mac
@@ -39,7 +39,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ai-script-studio-macos
+          name: jianxing-macos
           path: |
             dist/*.dmg
             dist/*.zip

@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * AI 智能剧本创作工具 —— Electron 主进程
+ * 践行（Jianxing）—— Electron 主进程
  * 职责：窗口管理、本地文件读写、导出（docx/pdf/txt）、壁纸持久化、AI 流式请求代理、设置持久化
  */
 
@@ -34,6 +34,16 @@ if (SMOKE || SHOT) {
     if (fixed) console.log('PROFILE_DIR ' + tmpProfile);
   } catch (err) {
     console.error('PROFILE_FAIL', err && err.message);
+  }
+}
+
+// 产品名从 AI Script Studio 改成「践行」后，Electron 默认会把 userData 换到新目录，
+// 导致老用户的设置/最近文件/壁纸全部「消失」。这里固定回原来的数据目录。
+if (!SMOKE && !SHOT) {
+  try {
+    app.setPath('userData', path.join(app.getPath('appData'), 'ai-script-studio'));
+  } catch (err) {
+    console.error('USERDATA_PIN_FAIL', err && err.message);
   }
 }
 
@@ -301,7 +311,7 @@ function createWindow() {
     minWidth: 960,
     minHeight: 640,
     backgroundColor: settings.theme === 'light' ? '#f4f4f7' : '#1e1e24',
-    title: 'AI 智能剧本创作工具',
+    title: '践行',
     show: false,
     autoHideMenuBar: true,
     icon: path.join(__dirname, '..', 'build', 'icon.png'),
@@ -477,7 +487,7 @@ ipcMain.handle('app:forceQuit', () => {
 
 ipcMain.handle('app:setTitle', (event, title) => {
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.setTitle(title ? title + ' - AI 智能剧本创作工具' : 'AI 智能剧本创作工具');
+    mainWindow.setTitle(title ? title + ' - 践行' : '践行');
   }
   return true;
 });
@@ -779,7 +789,7 @@ ipcMain.handle('export:docx', async (event, payload) => {
       }
     }
     const doc = new Document({
-      creator: 'AI 智能剧本创作工具',
+      creator: '践行',
       title: payload.title || '未命名剧本',
       sections: [{ properties: {}, children }]
     });

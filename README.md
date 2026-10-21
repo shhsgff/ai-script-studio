@@ -1,11 +1,14 @@
-# AI 剧本创作工具 · AI Script Studio
+# 践行 · AI 剧本创作工具（Jianxing）
 
-把一份「只有界面、没有功能」的 HTML 原型，做成了一套**真能用的 Windows 桌面软件**：
+把一份「只有界面、没有功能」的 HTML 原型，做成了一套**真能用的桌面软件**（Windows + macOS）：
 Electron + 原生 Node，界面沿用原型的暗色玻璃拟态风格，功能全部接通。
+
+> 1.1.9 及以前叫 **AI Script Studio**；**1.2.0 起中文名改为「践行」**，
+> 应用名 / 安装包 / 快捷方式全部换新，但**数据目录仍是 `ai-script-studio`**（老用户的设置不会丢）。
 
 [![构建 Windows 安装包](https://github.com/shhsgff/ai-script-studio/actions/workflows/build-windows.yml/badge.svg)](https://github.com/shhsgff/ai-script-studio/actions/workflows/build-windows.yml)
 
-> 现在版本 **1.1.9**：多文档标签、章 → 节两级目录、**可导入 / 可编辑的故事大纲**、查找替换、Word/PDF/纯文本导出、
+> 现在版本 **1.2.0**：多文档标签、章 → 节两级目录、**可导入 / 可编辑的故事大纲**、查找替换、Word/PDF/纯文本导出、
 > **本地 dsh 网关（不需要买 Key）**、**DSH 关键词一键生成剧本**、**MCP 反向写入**，
 > 下次启动自动回到上次的工作现场。1.1.4 加固了**子进程与 MCP**（崩溃不拖垮启动、残留进程自动清理、
 > 诊断日志在 `%APPDATA%\ai-script-studio\logs\app.log`）；1.1.5 让"机器写"和"人写"能同时进行；
@@ -17,6 +20,8 @@ Electron + 原生 Node，界面沿用原型的暗色玻璃拟态风格，功能�
 > 1.1.9 修掉「安装为 DSH 插件后一调用就崩」的 bug（插件目录不能再声明 type: module，
 > 服务器改名 mcp-server.cjs），并把 MCP 桥单独发成了一个仓库：
 > **[dsh-ai-script-studio-mcp](https://github.com/shhsgff/dsh-ai-script-studio-mcp)**（可以脱离本软件仓库单独 dsh plugin add）。
+> 1.2.0 改名为「践行」，修掉**点顶部「＋」会一次开出两个剧本标签**的 bug，
+> 并同时发布 Windows（安装版 / 免安装版）与 macOS（universal dmg，Intel + Apple Silicon 通用）安装包。
 
 ---
 

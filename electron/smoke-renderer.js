@@ -54,7 +54,7 @@
     assert('状态栏字数归零', document.getElementById('statusWords').textContent.trim() === '字数：0', document.getElementById('statusWords').textContent);
     assert('状态栏字符归零', document.getElementById('statusChars').textContent.trim() === '字符：0', document.getElementById('statusChars').textContent);
     assert('状态栏本章归零', document.getElementById('statusActWords').textContent.trim() === '本章：0', document.getElementById('statusActWords').textContent);
-    assert('标题栏恢复默认', document.getElementById('topTitle').textContent.trim() === 'AI 智能剧本创作工具', document.getElementById('topTitle').textContent);
+    assert('标题栏恢复默认', document.getElementById('topTitle').textContent.trim() === '践行', document.getElementById('topTitle').textContent);
     assert('项目名输入框已清空', document.getElementById('projectTitle').value === '', document.getElementById('projectTitle').value);
   });
 
@@ -74,6 +74,30 @@
     assert('目录栏显示', !document.getElementById('sidebarLeft').hidden);
     assert('大纲渲染 1 章', document.querySelectorAll('#outlineList .outline-item').length === 1);
     assert('正文章节标题非空', (document.getElementById('actTitle').textContent || '').trim().length > 0);
+  });
+
+  /* ---------- 2.5 顶部「＋」只新建一个标签（回归：曾一次点出两个剧本） ---------- */
+  await step('顶部「＋」只开一个标签', async () => {
+    const before = Workspace.count();
+    const beforeIds = Workspace.list().map(function (d) { return d.id; });
+    const plus = document.getElementById('btnNewTab');
+    assert('「＋」按钮存在', !!plus);
+    plus.click();
+    await wait(320);
+    const afterIds = Workspace.list().map(function (d) { return d.id; });
+    const added = afterIds.filter(function (id) { return beforeIds.indexOf(id) < 0; });
+    R.plusAdded = added.length;
+    R.plusTabs = Workspace.count();
+    assert('点一次「＋」只多一个剧本', added.length === 1, '新增 ' + added.length + ' 个 / 共 ' + afterIds.length + ' 个');
+    assert('标签条渲染数量一致', document.querySelectorAll('#tabBar .doc-tab').length === afterIds.length, document.querySelectorAll('#tabBar .doc-tab').length + ' / ' + afterIds.length);
+    const titles = Workspace.list().map(function (d) { return d.title; });
+    const dup = titles.some(function (t, i) { return titles.indexOf(t) !== i; });
+    assert('没有同名重复标签', !dup, titles.join(' | '));
+    // 收尾：把多开的空白剧本关掉，后面的用例继续在「冒烟剧本」上跑
+    const extraId = added[0];
+    if (extraId) await App.closeDoc(extraId);
+    await wait(220);
+    assert('关掉后回到原来的剧本', Workspace.count() === before, Workspace.count());
   });
 
   /* ---------- 3. 编辑与统计 ---------- */

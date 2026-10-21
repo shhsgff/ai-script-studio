@@ -149,7 +149,7 @@
         author: '',
         createdAt: now,
         updatedAt: now,
-        app: 'AI Script Studio',
+        app: '践行',
         summary: String(prompt || '').slice(0, 200)
       },
       acts: script.chapters.map((ch) => Project.actFromSections(ch.title, ch.sections)),

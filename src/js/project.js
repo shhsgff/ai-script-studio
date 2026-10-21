@@ -27,7 +27,7 @@
         author: '',
         createdAt: nowIso(),
         updatedAt: nowIso(),
-        app: 'AI Script Studio',
+        app: '践行',
         summary: ''
       },
       acts: [

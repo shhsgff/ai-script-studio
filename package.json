@@ -1,7 +1,7 @@
 {
   "name": "ai-script-studio",
-  "version": "1.1.9",
-  "description": "AI 智能剧本创作工具 - 桌面版",
+  "version": "1.2.0",
+  "description": "践行 - AI 剧本创作桌面工具",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/shhsgff/ai-script-studio.git"
@@ -11,7 +11,7 @@
     "url": "https://github.com/shhsgff/ai-script-studio/issues"
   },
   "main": "electron/main.js",
-  "author": "AI Script Studio",
+  "author": "践行",
   "license": "MIT",
   "scripts": {
     "prebuild": "node scripts/make-icon.js",
@@ -30,9 +30,9 @@
     "electron-builder": "^26.15.3"
   },
   "build": {
-    "appId": "com.aistudio.script",
-    "productName": "AI Script Studio",
-    "copyright": "Copyright © 2025",
+    "appId": "com.jianxing.script",
+    "productName": "践行",
+    "copyright": "Copyright © 2025 践行",
     "directories": {
       "output": "dist",
       "buildResources": "build"
@@ -69,7 +69,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "AI剧本创作工具",
+      "shortcutName": "践行",
       "deleteAppDataOnUninstall": false
     },
     "portable": {
@@ -91,7 +91,7 @@
       "gatekeeperAssess": false,
       "identity": null,
       "extendInfo": {
-        "NSHumanReadableCopyright": "Copyright © 2025 AI Script Studio",
+        "NSHumanReadableCopyright": "Copyright © 2025 践行",
         "LSMinimumSystemVersion": "10.15.0"
       }
     },

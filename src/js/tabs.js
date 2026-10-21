@@ -132,11 +132,8 @@
   }
 
   function bind() {
-    if (els.add) {
-      els.add.addEventListener('click', function () {
-        if (window.App && App.newProject) App.newProject();
-      });
-    }
+    // 注意：#btnNewTab 的点击由 app.js 的 bindWorkspace 统一绑定。
+    // 这里不要再绑一次，否则点一下「＋」会连开两个剧本标签（1.1.9 及以前的 bug）。
     if (els.strip) {
       els.strip.addEventListener('click', function (e) {
         const tab = e.target.closest('.doc-tab');
