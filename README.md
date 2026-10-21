@@ -22,6 +22,8 @@ Electron + 原生 Node，界面沿用原型的暗色玻璃拟态风格，功能�
 > **[dsh-ai-script-studio-mcp](https://github.com/shhsgff/dsh-ai-script-studio-mcp)**（可以脱离本软件仓库单独 dsh plugin add）。
 > 1.2.0 改名为「践行」，修掉**点顶部「＋」会一次开出两个剧本标签**的 bug，
 > 并同时发布 Windows（安装版 / 免安装版）与 macOS（universal dmg，Intel + Apple Silicon 通用）安装包。
+>
+> 📦 **下载安装包：[v1.2.0 发布页](https://github.com/shhsgff/ai-script-studio/releases/tag/v1.2.0)**（Windows 两个 exe + macOS dmg）
 
 ---
 
